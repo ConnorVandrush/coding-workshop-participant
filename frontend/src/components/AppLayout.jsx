@@ -34,6 +34,7 @@ import PropTypes from 'prop-types';
 import { useMediaQuery } from 'react-responsive';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import NotificationBell from './NotificationBell';
 import Notifier from './Notifier';
 import { logout, selectUser } from '../store/authSlice';
 import { selectDrawerOpen, setDrawerOpen } from '../store/uiSlice';
@@ -135,6 +136,7 @@ export default function AppLayout({ children }) {
             {isDesktop ? 'Facility Incident Management' : 'ACME Facilities'}
           </Typography>
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <NotificationBell />
             {user ? (
               <>
                 {isDesktop ? (

@@ -1,0 +1,4 @@
+# The worker only talks to PostgreSQL. boto3 is provided by the Lambda runtime,
+# and SQS delivery is handled by the event source mapping rather than by polling
+# from inside the function.
+psycopg[binary]==3.2.3

@@ -368,6 +368,27 @@ class NoteResponse(ApiModel):
 
 
 # --------------------------------------------------------------------------
+# Notifications
+# --------------------------------------------------------------------------
+class NotificationResponse(ApiModel):
+    """One entry in a person's notification feed."""
+
+    id: int
+    incident_id: Optional[int] = None
+    event: str
+    body: str
+    is_read: bool
+    created_at: datetime
+
+
+class NotificationSummary(ApiModel):
+    """The feed plus the unread count, so a badge needs only one request."""
+
+    unread: int
+    items: list[NotificationResponse]
+
+
+# --------------------------------------------------------------------------
 # Dashboard
 # --------------------------------------------------------------------------
 class CountBucket(ApiModel):

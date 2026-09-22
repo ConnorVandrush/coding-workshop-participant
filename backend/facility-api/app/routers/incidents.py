@@ -26,6 +26,7 @@ from app.domain import (
     can_transition,
 )
 from app.errors import ApiError, not_found
+from app.notifications import enqueue
 from app.models import (
     IncidentAssign,
     IncidentCreate,
@@ -589,6 +590,9 @@ async def assign_incident(
             (incident_id, user["id"], body),
         )
 
+    # Fan-out happens off the request: a notification failure must not undo an
+    # assignment that has already been made.
+    enqueue("assigned", int(incident_id), user["id"])
     return _serialise(_load_incident(incident_id, user))
 
 
@@ -686,6 +690,7 @@ async def change_status(
             ),
         )
 
+    enqueue("status_changed", int(incident_id), user["id"], detail=target.value)
     return _serialise(_load_incident(incident_id, user))
 
 
@@ -753,6 +758,7 @@ async def escalate_incident(
             ),
         )
 
+    enqueue("escalated" if payload.is_escalated else "de_escalated", int(incident_id), user["id"])
     return _serialise(_load_incident(incident_id, user))
 
 
@@ -862,6 +868,9 @@ async def create_note(
         (incident_id, user["id"], payload.body, payload.is_internal),
     )
     execute("UPDATE incidents SET updated_at = NOW() WHERE id = %s", (incident_id,))
+    # Internal notes are staff-only, so they are not announced to the reporter.
+    if not payload.is_internal:
+        enqueue("note_added", int(incident_id), user["id"])
     return {
         **(created or {}),
         "author": {

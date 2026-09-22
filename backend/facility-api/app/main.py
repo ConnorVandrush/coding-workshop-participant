@@ -39,7 +39,15 @@ from app.database import DatabaseUnavailable, ping
 from app.domain import workflow_graph
 from app.errors import ApiError
 from app.middleware import ServicePrefixMiddleware
-from app.routers import auth, dashboard, engineers, facilities, incidents, users
+from app.routers import (
+    auth,
+    dashboard,
+    engineers,
+    facilities,
+    incidents,
+    notifications,
+    users,
+)
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -198,6 +206,7 @@ api.include_router(facilities.router)
 api.include_router(engineers.router)
 api.include_router(incidents.router)
 api.include_router(dashboard.router)
+api.include_router(notifications.router)
 
 # Outermost wrapper: must run before routing, hence not add_middleware().
 app = ServicePrefixMiddleware(api, SERVICE_PREFIX)

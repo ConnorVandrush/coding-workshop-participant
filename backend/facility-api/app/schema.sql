@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS incident_notes (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    incident_id BIGINT      REFERENCES incidents (id) ON DELETE CASCADE,
+    event       TEXT        NOT NULL,
+    body        TEXT        NOT NULL,
+    is_read     BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Indexes supporting the dashboard aggregations and the list filters.
 CREATE INDEX IF NOT EXISTS idx_incidents_status      ON incidents (status);
 CREATE INDEX IF NOT EXISTS idx_incidents_priority    ON incidents (priority);
@@ -91,3 +101,4 @@ CREATE INDEX IF NOT EXISTS idx_incidents_assignee    ON incidents (assignee_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_building    ON incidents (building_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_created_at  ON incidents (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notes_incident        ON incident_notes (incident_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_read, created_at DESC);

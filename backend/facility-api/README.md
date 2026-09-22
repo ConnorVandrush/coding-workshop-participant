@@ -188,6 +188,36 @@ the API rather than PostgreSQL, because Aurora is only reachable from inside its
 own security group. See `bin/README.md` for details and the known limitation
 around SLA timestamps.
 
+## Asynchronous notifications
+
+Telling everyone about a change is fan-out: one status change can concern the
+reporter, the assigned engineer and every facility admin. Doing that inside the
+request would add latency to a workflow transition, and a failure to notify
+would fail a state change that has already been agreed. So the API enqueues and
+returns:
+
+```
+POST /incidents/{id}/status
+  -> record the transition, enqueue {event, incident_id, actor_id}
+SQS coding-workshop-notifications-{app_id}
+  -> backend/notifier expands it into one notification per recipient
+GET /notifications  ->  the bell in the app bar
+```
+
+The person who caused the change is not notified about their own action, and
+internal notes are not announced, since employees cannot see them.
+
+Failures are handled by SQS rather than by code: the worker returns
+`batchItemFailures`, so a single bad record is retried alone instead of
+replaying the batch, and after three attempts it lands in the dead-letter
+queue. `infra/notifications.tf` defines the queue, its dead-letter queue and
+the event source mapping.
+
+`boto3` is deliberately not in `requirements.txt` — the Lambda runtime provides
+it, and vendoring it would add tens of megabytes. Where it is absent, such as a
+bare `uvicorn` run, enqueueing degrades to a logged no-op: a missing
+notification must never break the workflow it describes.
+
 ## Incident workflow
 
 ```mermaid

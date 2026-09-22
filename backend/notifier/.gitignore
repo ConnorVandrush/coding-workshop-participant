@@ -1,0 +1,24 @@
+# bin/start-dev.sh installs pip requirements directly into this folder so that
+# LocalStack hot-reload can mount it. Keep those artifacts out of git.
+.pip_installed
+__pycache__/
+*.dist-info/
+*.egg-info/
+bin/
+annotated_types/
+anyio/
+certifi/
+click/
+fastapi/
+h11/
+idna/
+jwt/
+mangum/
+psycopg/
+psycopg_binary/
+pydantic/
+pydantic_core/
+sniffio/
+starlette/
+typing_extensions.py
+typing_inspection/
