@@ -1,0 +1,159 @@
+# Test and deploy the backend when it changes.
+#
+# CodePipeline is not an option in this workshop: the participant IAM policy
+# (infra/policy.tftpl) is an allow-list that grants no codepipeline, codebuild or
+# codeconnections permission, so a pipeline cannot be created. GitHub Actions is
+# the CI mechanism this repository already uses.
+#
+# Deployment is gated on the test job, and is skipped entirely when the
+# workshop secrets are absent, so forks without credentials still run tests.
+#
+# Required repository secrets for the deploy job:
+#   PARTICIPANT_ID    - your participant id, e.g. 0922f9b2
+#   PARTICIPANT_CODE  - the code from your workshop email
+#   EVENT_ID          - the workshop event id (optional, defaults to abcd1234)
+#   PARTICIPANT_URL   - optional; skips the DNS lookup if set
+
+name: Backend - Test and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - 'infra/**'
+      - '.github/workflows/backend.deploy.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - 'infra/**'
+  workflow_dispatch:
+
+# Never let two deploys race on the same Terraform state.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    # The suite runs against a real PostgreSQL and truncates every table on
+    # startup, so it gets a throwaway server of its own.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: devtest
+          POSTGRES_DB: acmetest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          # Must match the Lambda runtime in infra/locals.tf, so the wheels
+          # resolved here are the ones the function would actually import.
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/facility-api/requirements.txt pytest httpx
+
+      - name: Run tests
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          POSTGRES_PORT: '5432'
+          POSTGRES_NAME: acmetest
+          POSTGRES_USER: postgres
+          POSTGRES_PASS: devtest
+          IS_LOCAL: 'true'
+        run: pytest tests -v
+
+      - name: Run Bandit security scan
+        run: |
+          python -m pip install bandit
+          bandit -r ./backend
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # `secrets` cannot be referenced in a job-level `if`, so the guard runs as
+      # the first step and every later step keys off its output.
+      - name: Check deployment credentials are configured
+        id: guard
+        env:
+          PARTICIPANT_CODE: ${{ secrets.PARTICIPANT_CODE }}
+          PARTICIPANT_ID: ${{ secrets.PARTICIPANT_ID }}
+        run: |
+          if [ -n "$PARTICIPANT_CODE" ] && [ -n "$PARTICIPANT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PARTICIPANT_ID / PARTICIPANT_CODE not set - skipping deployment."
+          fi
+
+      - name: Install deployment tooling
+        if: steps.guard.outputs.ready == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq dnsutils
+
+      - name: Install Terraform
+        if: steps.guard.outputs.ready == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.11.0'
+          terraform_wrapper: false
+
+      - name: Deploy backend
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PARTICIPANT_ID: ${{ secrets.PARTICIPANT_ID }}
+          PARTICIPANT_CODE: ${{ secrets.PARTICIPANT_CODE }}
+          EVENT_ID: ${{ secrets.EVENT_ID }}
+          PARTICIPANT_URL: ${{ secrets.PARTICIPANT_URL }}
+          AWS_REGION: us-east-2
+        # deploy-backend.sh calls setup-participant.sh, which mints short-lived
+        # AWS credentials from PARTICIPANT_CODE. Nothing long-lived is stored.
+        run: ./bin/deploy-backend.sh aws
+
+      - name: Verify the deployment is healthy
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          cd infra
+          BASE=$(terraform output -raw api_base_url 2>/dev/null || echo "")
+          if [ -z "$BASE" ]; then
+            echo "::warning::Could not read api_base_url; skipping smoke test."
+            exit 0
+          fi
+          echo "Smoke testing ${BASE}/api/facility-api/health"
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 30 "${BASE}/api/facility-api/health"; then
+              echo ""
+              echo "Backend is healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Backend did not become healthy after deployment."
+          exit 1

@@ -1,0 +1,154 @@
+# Test and deploy the frontend when it changes.
+#
+# See .github/workflows/backend.deploy.yml for why this is GitHub Actions rather
+# than CodePipeline.
+#
+# NOTE ON "TESTS": the frontend currently has no unit tests, so the gate here is
+# lint + dependency audit + a production build. A build failure catches real
+# breakage (a bad import, invalid JSX, a missing module), but it cannot catch a
+# behavioural regression. Add Vitest/React Testing Library specs and a `test`
+# script to frontend/package.json, then add a step below, to make this a real
+# test gate.
+#
+# Required repository secrets for the deploy job:
+#   PARTICIPANT_ID    - your participant id, e.g. 0922f9b2
+#   PARTICIPANT_CODE  - the code from your workshop email
+#   EVENT_ID          - the workshop event id (optional, defaults to abcd1234)
+#   PARTICIPANT_URL   - optional; skips the DNS lookup if set
+
+name: Frontend - Test and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.deploy.yml'
+  pull_request:
+    paths:
+      - 'frontend/**'
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        # `npm ci` when a lockfile is present, so CI installs exactly what was
+        # committed; fall back to `npm install` when it is not.
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Audit dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: Run unit tests
+        working-directory: frontend
+        # Runs the suite when one exists, and says so plainly when it does not,
+        # rather than reporting a green "tests passed" for nothing.
+        run: |
+          if node -e "process.exit(require('./package.json').scripts.test ? 0 : 1)"; then
+            npm test
+          else
+            echo "::warning::No frontend test script defined - only lint, audit and build gate this deploy."
+          fi
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Check deployment credentials are configured
+        id: guard
+        env:
+          PARTICIPANT_CODE: ${{ secrets.PARTICIPANT_CODE }}
+          PARTICIPANT_ID: ${{ secrets.PARTICIPANT_ID }}
+        run: |
+          if [ -n "$PARTICIPANT_CODE" ] && [ -n "$PARTICIPANT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PARTICIPANT_ID / PARTICIPANT_CODE not set - skipping deployment."
+          fi
+
+      - name: Install Node.js
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install deployment tooling
+        if: steps.guard.outputs.ready == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq dnsutils
+
+      - name: Install Terraform
+        if: steps.guard.outputs.ready == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.11.0'
+          terraform_wrapper: false
+
+      - name: Deploy frontend
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PARTICIPANT_ID: ${{ secrets.PARTICIPANT_ID }}
+          PARTICIPANT_CODE: ${{ secrets.PARTICIPANT_CODE }}
+          EVENT_ID: ${{ secrets.EVENT_ID }}
+          PARTICIPANT_URL: ${{ secrets.PARTICIPANT_URL }}
+          AWS_REGION: us-east-2
+        # deploy-frontend.sh reads the API URL from the Terraform outputs,
+        # exports VITE_API_URL, runs the production build, syncs it to S3 and
+        # invalidates the CloudFront distribution.
+        run: ./bin/deploy-frontend.sh aws
+
+      - name: Verify the site is serving
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          cd infra
+          SITE=$(terraform output -raw website_url 2>/dev/null || echo "")
+          if [ -z "$SITE" ]; then
+            echo "::warning::Could not read website_url; skipping smoke test."
+            exit 0
+          fi
+          echo "Smoke testing $SITE"
+          for i in $(seq 1 10); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$SITE" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "Site is serving (HTTP 200)."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Site did not return HTTP 200 after deployment."
+          exit 1
