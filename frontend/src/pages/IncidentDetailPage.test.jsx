@@ -1,0 +1,277 @@
+/**
+ * Tests for the incident detail page.
+ *
+ * This is where the workflow, assignment and the note thread meet, and where
+ * the UI mirrors the API's permissions so no control leads to a 403. The API
+ * stays the authority; these tests check the page does not offer dead ends.
+ */
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import IncidentDetailPage from './IncidentDetailPage';
+import { ADMIN, EMPLOYEE, ENGINEER, mockApi, renderPage } from '../test/utils';
+
+const reporter = { id: 2, user_id: 2, full_name: 'Dana Ruiz', email: 'dana.ruiz@acme.inc' };
+const assignee = { id: 5, user_id: 3, full_name: 'Sam Okafor', email: 'sam.okafor@acme.inc' };
+
+const incident = (overrides = {}) => ({
+  id: 42,
+  title: 'Projector will not power on',
+  description: 'Meeting room 3A projector is dead since Monday.',
+  category: 'AV_EQUIPMENT',
+  priority: 'HIGH',
+  status: 'IN_PROGRESS',
+  is_escalated: false,
+  escalation_note: null,
+  blocked_reason: null,
+  resolution: null,
+  reporter,
+  assignee,
+  location: { building_id: 1, building_name: 'HQ North', floor_id: 3, floor_level: 3, seat_id: 7, seat_code: '3A-12' },
+  note_count: 1,
+  allowed_transitions: ['BLOCKED', 'RESOLVED', 'OPEN'],
+  created_at: '2026-09-22T10:00:00Z',
+  updated_at: '2026-09-22T11:30:00Z',
+  acknowledged_at: '2026-09-22T10:20:00Z',
+  assigned_at: '2026-09-22T10:20:00Z',
+  resolved_at: null,
+  closed_at: null,
+  ...overrides,
+});
+
+const notes = [{
+  id: 1, incident_id: 42, author: reporter,
+  body: 'Tried a different HDMI cable, no change.', is_internal: false,
+  created_at: '2026-09-22T10:05:00Z',
+}];
+
+const engineers = [{
+  id: 5, user_id: 3, email: 'sam.okafor@acme.inc', full_name: 'Sam Okafor',
+  specialties: ['AV_EQUIPMENT'], phone: null, is_available: true,
+  max_active_incidents: 8, active_incidents: 3, has_capacity: true,
+  created_at: '2026-09-01T09:00:00Z',
+}];
+
+const workflow = { statuses: [{ id: 'OPEN', label: 'Open', is_terminal: false }], transitions: [] };
+
+/**
+ * Stub the endpoints the detail page loads.
+ *
+ * @param {object} [overrides] Extra or replacement handlers.
+ * @returns {import('vitest').Mock} The fetch stub.
+ */
+const api = (overrides = {}) => mockApi({
+  'GET /incidents/:id': incident(),
+  'GET /incidents/:id/notes': notes,
+  'GET /engineers': engineers,
+  'GET /workflow': workflow,
+  ...overrides,
+});
+
+/**
+ * Render the page at the detail route.
+ *
+ * @param {object} user The signed-in persona.
+ * @returns {object} The render result.
+ */
+const renderDetail = (user) =>
+  renderPage(<IncidentDetailPage />, { user, route: '/incidents/42', path: '/incidents/:incidentId' });
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('rendering', () => {
+  it('shows the incident and its resolved location', async () => {
+    api();
+    renderDetail(ADMIN);
+    expect(await screen.findByText('Projector will not power on')).toBeInTheDocument();
+    expect(screen.getByText('HQ North · Level 3 · 3A-12')).toBeInTheDocument();
+    expect(screen.getByText('Av Equipment')).toBeInTheDocument();
+  });
+
+  it('says so plainly when nobody is assigned', async () => {
+    api({ 'GET /incidents/:id': incident({ assignee: null }) });
+    renderDetail(ADMIN);
+    expect(await screen.findByText('Nobody yet')).toBeInTheDocument();
+  });
+
+  it('highlights a blocking reason', async () => {
+    api({ 'GET /incidents/:id': incident({ status: 'BLOCKED', blocked_reason: 'Lamp on back-order' }) });
+    renderDetail(ADMIN);
+    expect(await screen.findByText(/Lamp on back-order/)).toBeInTheDocument();
+  });
+
+  it('renders the note thread', async () => {
+    api();
+    renderDetail(ADMIN);
+    expect(await screen.findByText('Tried a different HDMI cable, no change.')).toBeInTheDocument();
+    expect(screen.getByText('Notes (1)')).toBeInTheDocument();
+  });
+
+  it('explains an incident that is missing or out of scope', async () => {
+    api({
+      'GET /incidents/:id': {
+        status: 404,
+        body: { error: { status: 404, type: 'not_found', message: 'Incident 42 was not found', details: null } },
+      },
+    });
+    renderDetail(EMPLOYEE);
+    expect(await screen.findByText(/does not exist, or it is outside what your role can see/)).toBeInTheDocument();
+  });
+});
+
+describe('controls mirror the API permissions', () => {
+  it('offers assignment and status controls to a facility admin', async () => {
+    api();
+    renderDetail(ADMIN);
+    expect(await screen.findByText('Assignment')).toBeInTheDocument();
+    expect(screen.getByText('Change status')).toBeInTheDocument();
+  });
+
+  it('hides the assignment panel from an employee', async () => {
+    api();
+    renderDetail(EMPLOYEE);
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByText('Assignment')).not.toBeInTheDocument();
+  });
+
+  it('offers only the transitions the API says are legal', async () => {
+    api();
+    renderDetail(ADMIN);
+    await screen.findByText('Change status');
+
+    await userEvent.click(screen.getByLabelText('Move to'));
+    const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
+    expect(options).toEqual(['Choose a status', 'Blocked', 'Resolved', 'Open']);
+    expect(options).not.toContain('Closed');
+  });
+
+  it('lets only a facility admin clear an escalation', async () => {
+    api({ 'GET /incidents/:id': incident({ is_escalated: true }) });
+    renderDetail(EMPLOYEE);
+    await screen.findByText('This incident is escalated.');
+    expect(screen.queryByRole('button', { name: /Clear escalation/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Only a facility admin can clear an escalation/)).toBeInTheDocument();
+  });
+
+  it('shows the delete control to an admin only', async () => {
+    api();
+    renderDetail(ADMIN);
+    expect(await screen.findByLabelText('Delete incident')).toBeInTheDocument();
+  });
+
+  it('hides the delete control from an engineer', async () => {
+    api();
+    renderDetail(ENGINEER);
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByLabelText('Delete incident')).not.toBeInTheDocument();
+  });
+});
+
+describe('driving the workflow', () => {
+  it('demands a reason before blocking', async () => {
+    api();
+    renderDetail(ADMIN);
+    await screen.findByText('Change status');
+
+    await userEvent.click(screen.getByLabelText('Move to'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Blocked' }));
+
+    // The API rejects a block with no reason, so the UI must not offer to send one.
+    expect(screen.getByRole('button', { name: /Apply/i })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/Why is it blocked/), 'Lamp on back-order');
+    expect(screen.getByRole('button', { name: /Apply/i })).toBeEnabled();
+  });
+
+  it('posts the reason with the transition', async () => {
+    const fetchMock = api({
+      'POST /incidents/:id/status': incident({ status: 'BLOCKED', blocked_reason: 'Lamp on back-order' }),
+    });
+    renderDetail(ADMIN);
+    await screen.findByText('Change status');
+
+    await userEvent.click(screen.getByLabelText('Move to'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Blocked' }));
+    await userEvent.type(screen.getByLabelText(/Why is it blocked/), 'Lamp on back-order');
+    await userEvent.click(screen.getByRole('button', { name: /Apply/i }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) =>
+        init?.method === 'POST' && String(url).endsWith('/status'));
+      expect(JSON.parse(post[1].body)).toEqual({ status: 'BLOCKED', reason: 'Lamp on back-order' });
+    });
+  });
+
+  it('surfaces a rejected transition', async () => {
+    api({
+      'POST /incidents/:id/status': {
+        status: 409,
+        body: { error: { status: 409, type: 'invalid_transition', message: 'Cannot move an incident from IN_PROGRESS to CLOSED', details: null } },
+      },
+    });
+    renderDetail(ADMIN);
+    await screen.findByText('Change status');
+
+    await userEvent.click(screen.getByLabelText('Move to'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Open' }));
+    await userEvent.click(screen.getByRole('button', { name: /Apply/i }));
+
+    expect(await screen.findByText(/Cannot move an incident/)).toBeInTheDocument();
+  });
+});
+
+describe('notes', () => {
+  it('posts a note and shows it in the thread', async () => {
+    const fetchMock = api({
+      'POST /incidents/:id/notes': {
+        status: 201,
+        body: { id: 2, incident_id: 42, author: ADMIN, body: 'Ordered a replacement lamp.', is_internal: false, created_at: '2026-09-22T12:00:00Z' },
+      },
+    });
+    renderDetail(ADMIN);
+    await screen.findByText('Notes (1)');
+
+    await userEvent.type(screen.getByLabelText(/Add a note/), 'Ordered a replacement lamp.');
+    await userEvent.click(screen.getByRole('button', { name: /Post note/i }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([url, init]) =>
+        init?.method === 'POST' && String(url).endsWith('/notes'));
+      expect(JSON.parse(post[1].body)).toEqual({ body: 'Ordered a replacement lamp.', is_internal: false });
+    });
+    expect(await screen.findByText('Note added')).toBeInTheDocument();
+  });
+
+  it('offers the internal-note switch to staff but not to employees', async () => {
+    api();
+    const { unmount } = renderDetail(ADMIN);
+    expect(await screen.findByLabelText('Internal note')).toBeInTheDocument();
+    unmount();
+
+    renderDetail(EMPLOYEE);
+    await screen.findByLabelText(/Add a note/);
+    expect(screen.queryByLabelText('Internal note')).not.toBeInTheDocument();
+  });
+
+  it('closes the thread once the incident is closed', async () => {
+    api({ 'GET /incidents/:id': incident({ status: 'CLOSED', allowed_transitions: ['OPEN'] }) });
+    renderDetail(ADMIN);
+    expect(await screen.findByText(/notes can no longer be added/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Add a note/)).not.toBeInTheDocument();
+  });
+});
+
+describe('assignment', () => {
+  it('marks an engineer at capacity as unselectable', async () => {
+    api({
+      'GET /engineers': [{ ...engineers[0], active_incidents: 8, has_capacity: false }],
+      'GET /incidents/:id': incident({ assignee: null }),
+    });
+    renderDetail(ADMIN);
+    await screen.findByText('Assignment');
+
+    await userEvent.click(screen.getByLabelText('Assigned engineer'));
+    const option = await screen.findByRole('option', { name: /at capacity/ });
+    expect(option).toHaveAttribute('aria-disabled', 'true');
+  });
+});

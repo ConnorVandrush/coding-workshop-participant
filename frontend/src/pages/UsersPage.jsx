@@ -130,7 +130,7 @@ export default function UsersPage() {
                 <Switch
                   checked={account.is_active}
                   onChange={(event) => changeStatus(account, event.target.checked)}
-                  inputProps={{ 'aria-label': `Active state for ${account.full_name}` }}
+                  slotProps={{ input: { 'aria-label': `Active state for ${account.full_name}` } }}
                 />
               </Stack>
             </Paper>
@@ -177,7 +177,7 @@ export default function UsersPage() {
                     <Switch
                       checked={account.is_active}
                       onChange={(event) => changeStatus(account, event.target.checked)}
-                      inputProps={{ 'aria-label': `Active state for ${account.full_name}` }}
+                      slotProps={{ input: { 'aria-label': `Active state for ${account.full_name}` } }}
                     />
                   </TableCell>
                 </TableRow>

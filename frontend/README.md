@@ -101,27 +101,31 @@ npm run test:watch # watch mode while developing
 npm run coverage   # v8 coverage report
 ```
 
-70 tests across the API client, the Redux slices and the components. They
-concentrate on behaviour a production build cannot catch:
+139 tests across the API client, the Redux slices, the components and every
+page. They concentrate on behaviour a production build cannot catch:
 
 * `services/api.test.js` — empty filters are dropped from query strings (the
   API rejects `""` for enum parameters), the error envelope is unwrapped, a 204
   returns null, and a network failure becomes a readable message.
-* `store/incidentsSlice.test.js` — changing a filter returns to page one, and a
-  write refreshes both the detail view and the matching list row without
-  disturbing its neighbours.
-* `store/authSlice.test.js` — a restored token that turns out to be expired is
-  discarded rather than leaving a half-signed-in state.
-* `components/IncidentList.test.jsx` — the responsive switch, with
-  `react-responsive` mocked so the breakpoint is deterministic.
-* `components/ProtectedRoute.test.jsx` — the role guard, including that it waits
-  for the session check before judging a role.
-* `pages/LoginPage.test.jsx` — the full sign-in path against a real store with
-  only `fetch` stubbed.
+* `store/*.test.js` — changing a filter returns to page one; a write refreshes
+  both the detail view and the matching list row; a restored token that turns
+  out to be expired is discarded rather than leaving a half-signed-in state.
+* `components/*.test.jsx` — the responsive table/card switch, the role guard
+  waiting for the session check before judging a role, and the chip vocabulary.
+* `pages/*.test.jsx` — each page against a real store with only `fetch` stubbed,
+  via the fake API in `src/test/utils.jsx`. These assert that the controls a
+  page offers match what the API permits, that requests carry the right body,
+  and that a refusal from the server is surfaced rather than swallowed.
 
-The suite was mutation-checked: removing the page reset in `setFilters` and
-inverting the responsive breakpoint each made it fail, so it detects the
-regressions it claims to.
+Rules that protect a deployment — refusing to demote the last admin, refusing
+self-deactivation — live in the API on purpose, so the page tests check those
+messages are *displayed*, not that the UI re-implements the rule.
+
+The suite is mutation-checked rather than assumed useful. Removing the page
+reset in `setFilters`, inverting the responsive breakpoint, leaking the
+work-distribution panel to employees, dropping the accessible name from the
+activation switches, and widening who sees the assignment panel each made it
+fail.
 
 See `backend/facility-api/README.md` for the repository secrets both deploy
 workflows need, and for why this is GitHub Actions rather than CodePipeline.
