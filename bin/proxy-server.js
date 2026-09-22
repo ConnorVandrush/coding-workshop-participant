@@ -91,13 +91,17 @@ const server = http.createServer((req, res) => {
   delete headers['sec-fetch-mode'];
   delete headers['sec-fetch-dest'];
 
-  // Keep only essential headers
+  // Forward everything that survived the strip above, rather than allow-listing
+  // a handful of headers. An allow-list silently drops `authorization`, so every
+  // authenticated request reaches the Lambda anonymous and comes back 401 - with
+  // the token perfectly valid, which makes it look like a login bug.
   const options = {
     hostname: target.hostname,
     port: target.port,
     path: target.path,
     method: req.method,
     headers: {
+      ...headers,
       'accept': headers.accept || 'application/json',
       'content-type': headers['content-type'] || 'application/json',
       'user-agent': headers['user-agent'] || 'proxy-server',

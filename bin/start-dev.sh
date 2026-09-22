@@ -51,62 +51,61 @@ export AWS_ENDPOINT_URL_S3="http://s3.localhost.localstack.cloud:4566"
 # ============================================================
 echo -e "[1/5] Checking PostgreSQL..."
 
-if ! command -v psql &> /dev/null; then
-    echo -e "ERROR: PostgreSQL (psql) is not installed"
-    echo "Install: brew install postgresql@16 (Mac) or sudo apt install postgresql (Linux)"
-    exit 1
+# Lambda functions run inside Docker containers, so they reach the database at
+# the Docker bridge address, not on loopback. This must match the value of
+# TF_VAR_aws_postgres_host exported in STEP 4.
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    PG_BRIDGE_HOST="172.17.0.1"
+else
+    PG_BRIDGE_HOST="host.docker.internal"
 fi
 
+PG_CONTAINER="coding-workshop-postgres"
 PG_OK=false
 
-if pg_isready -q; then
-    # Check if bound to 0.0.0.0 so Docker Lambda containers can reach it
-    if ss -ltn 2>/dev/null | grep -q '0.0.0.0:5432'; then
-        PG_OK=true
-        echo -e "  ✓ PostgreSQL is running and bound to 0.0.0.0:5432"
-    else
-        echo -e "  ⚠ PostgreSQL running but not bound to 0.0.0.0, reconfiguring..."
-    fi
+# Already reachable on the address the Lambda containers use? Nothing to do.
+if PGCONNECT_TIMEOUT=3 pg_isready -q -h "$PG_BRIDGE_HOST" -p 5432 2>/dev/null; then
+    PG_OK=true
+    echo -e "  ✓ PostgreSQL reachable on ${PG_BRIDGE_HOST}:5432"
 fi
 
 if [ "$PG_OK" = false ]; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-        PG_SERVICE=$(brew services list 2>/dev/null | awk '/^postgresql/ {print $1}' | head -1)
-        if [ -z "$PG_SERVICE" ]; then
-            echo -e "  ✗ No PostgreSQL brew service found. Install: brew install postgresql@16"
-            exit 1
-        fi
-        PG_DATA_DIR="/opt/homebrew/var/${PG_SERVICE}"
-        if [ ! -d "$PG_DATA_DIR" ] || [ -z "$(ls -A "$PG_DATA_DIR" 2>/dev/null)" ]; then
-            echo -e "  ⚠ PostgreSQL data directory not found, initializing..."
-            initdb "$PG_DATA_DIR" || { echo -e "  ✗ Failed to initialize PostgreSQL data directory"; exit 1; }
-        fi
-        brew services restart "$PG_SERVICE" || { echo -e "  ✗ Failed to start PostgreSQL"; exit 1; }
-    else
-        PG_CONF=$(find /etc/postgresql -name "postgresql.conf" 2>/dev/null | head -1)
-        PG_SERVICE=$(systemctl list-units --type=service --all 2>/dev/null | awk '/postgresql/ {print $1}' | head -1)
-        if [ -z "$PG_SERVICE" ]; then
-            echo -e "  ✗ No PostgreSQL systemctl service found. Install: sudo apt install postgresql"
-            exit 1
-        fi
+    # Run PostgreSQL in a container rather than rebinding the system server.
+    # Editing postgresql.conf/pg_hba.conf and restarting the service needs sudo,
+    # which makes the script unusable wherever a password prompt cannot be
+    # answered. Binding to the bridge address specifically (rather than 0.0.0.0)
+    # also avoids clashing with a system PostgreSQL already on 127.0.0.1:5432.
+    docker info > /dev/null 2>&1 || {
+        echo -e "  ✗ Docker is not running. Please start Docker and try again."
+        exit 1
+    }
 
-        PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" 2>/dev/null | head -1)
-        [ -n "$PG_CONF" ] && sudo sed -i "s/#\?listen_addresses\s*=\s*'[^']*'/listen_addresses = '*'/" "$PG_CONF"
-        # Allow all hosts to connect (local dev only)
-        if [ -n "$PG_HBA" ] && ! sudo grep -q "0.0.0.0/0" "$PG_HBA"; then
-            echo "host all all 0.0.0.0/0 trust" | sudo tee -a "$PG_HBA" > /dev/null
-        fi
-        sudo systemctl restart "$PG_SERVICE" || { echo -e "  ✗ Failed to restart PostgreSQL"; exit 1; }
+    if docker ps -a --format '{{.Names}}' | grep -q "^${PG_CONTAINER}$"; then
+        echo -e "  ⚠ PostgreSQL not reachable, restarting container '${PG_CONTAINER}'..."
+        docker start "$PG_CONTAINER" > /dev/null 2>&1 || {
+            echo -e "  ✗ Failed to start the PostgreSQL container"; exit 1; }
+    else
+        echo -e "  ⚠ PostgreSQL not reachable on ${PG_BRIDGE_HOST}:5432, starting a container..."
+        # Credentials must match the local branch of local.env_vars in
+        # infra/locals.tf, which is what gets injected into each Lambda.
+        docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres123 \
+            -e POSTGRES_DB=postgres \
+            -p "${PG_BRIDGE_HOST}:5432:5432" \
+            postgres:17-alpine > /dev/null || {
+                echo -e "  ✗ Failed to create the PostgreSQL container"; exit 1; }
     fi
 
-    # Wait for PostgreSQL to be ready and bound
-    for i in {1..10}; do
-        if pg_isready -q && ss -ltn 2>/dev/null | grep -q '0.0.0.0:5432'; then
-            echo -e "  ✓ PostgreSQL started and bound to 0.0.0.0:5432"
+    # Wait for the server to accept connections
+    for i in {1..30}; do
+        if PGCONNECT_TIMEOUT=3 pg_isready -q -h "$PG_BRIDGE_HOST" -p 5432 2>/dev/null; then
+            echo -e "  ✓ PostgreSQL ready on ${PG_BRIDGE_HOST}:5432"
             break
         fi
-        if [ "$i" -eq 10 ]; then
-            echo -e "  ✗ PostgreSQL failed to start within 10 seconds"
+        if [ "$i" -eq 30 ]; then
+            echo -e "  ✗ PostgreSQL failed to become ready within 30 seconds"
+            docker logs --tail 20 "$PG_CONTAINER" 2>&1 | sed 's/^/    /'
             exit 1
         fi
         sleep 1
@@ -119,6 +118,13 @@ echo ""
 # STEP 2: Check and Start MongoDB
 # ============================================================
 echo -e "[2/5] Checking MongoDB..."
+
+# Run the whole check in a subshell so that its `exit 1` paths end the
+# subshell rather than the script: MongoDB is optional here. No service under
+# backend/ uses it, and infra/variable.tf defaults aws_mongo_enabled to false,
+# so an unavailable MongoDB must not block local development. Starting it also
+# needs privileges on a fresh machine (/var/lib/mongodb is root-owned).
+(
 
 # Check if mongod is installed
 if ! command -v mongod &> /dev/null; then
@@ -226,6 +232,8 @@ else
 
     echo -e "  ✓ MongoDB started and verified"
 fi
+
+) || echo -e "  ⚠ MongoDB unavailable - continuing (no service in this project uses it)"
 
 echo ""
 
@@ -339,8 +347,20 @@ for req in "$PROJECT_ROOT"/backend/*/requirements.txt; do
         continue
     fi
     echo -e "  Installing pip requirements for $(basename "$svc_dir")..."
-    pip install --quiet --target="$svc_dir" -r "$req" 2>/dev/null || true
-    echo "$REQS_HASH" > "$HASH_FILE"
+    # Vendor with `python3 -m pip`, never a bare `pip`: the first pip on PATH can
+    # belong to a different interpreter than the Lambda runtime (python3.13), and
+    # a wheel built for one CPython ABI will not import under another - which
+    # surfaces only at invoke time as "No module named ...".
+    # Errors are shown rather than discarded, and the stamp file is written only
+    # on success, so a failed install cannot be silently skipped on the next run.
+    if python3 -m pip install --quiet --target="$svc_dir" -r "$req"; then
+        echo "$REQS_HASH" > "$HASH_FILE"
+        echo -e "  ✓ Installed pip requirements for $(basename "$svc_dir")"
+    else
+        echo -e "  ✗ Failed to install pip requirements for $(basename "$svc_dir")"
+        echo -e "    Check that python3 ($(python3 --version 2>&1)) matches the Lambda runtime."
+        exit 1
+    fi
 done
 
 # Install npm dependencies into each Node.js service directory for hot-reload

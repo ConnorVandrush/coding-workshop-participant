@@ -92,11 +92,24 @@ Starts the complete development environment with hot-reload.
 
 **What it does**:
 
+* Starts PostgreSQL in a container published on the Docker bridge address, which
+  is where Lambda containers reach it (no `sudo` required)
+* Checks MongoDB, continuing with a warning if it is unavailable, since no
+  service in this project uses it
 * Checks LocalStack is running
+* Vendors each service's pip requirements with `python3 -m pip`, so the wheels
+  match the Lambda runtime's CPython ABI
 * Verifies backend is deployed
 * Generates `.env.local` for frontend
 * Starts proxy server on port 3001 (CORS workaround)
 * Starts React dev server on port 3000 (hot-reload)
+
+**Point the frontend at it** (once):
+
+```sh
+echo 'VITE_API_URL=http://localhost:3001' > frontend/.env.development.local
+./bin/seed-database.py --url http://localhost:3001
+```
 
 **When to use**:
 
@@ -152,6 +165,52 @@ Development CORS proxy server for LocalStack.
 ```sh
 node ./bin/proxy-server.js
 ```
+
+### `seed-database.py`
+
+Populates the facility incident database with realistic demo data.
+
+**What it does**:
+
+* Registers a facility admin, 6 employees and 4 engineers (all `@acme.inc`)
+* Creates 3 buildings, 8 floors and 21 seats
+* Reports 24 incidents across every category and priority, then drives each one
+  through the real workflow (assign, progress, block, resolve, close) so the
+  dashboards, hotspots and notes all have something to show
+* Idempotent - existing records are reused, so it is safe to re-run
+
+**Why it uses the API rather than `psql`**: Aurora has no public endpoint and its
+security group only admits traffic from itself, so the Lambda is the only thing
+that can reach the database. Going through the API also means passwords are
+hashed by the service and every incident obeys the same validation and RBAC
+rules as real user activity.
+
+**When to use**:
+
+* After a fresh `./bin/deploy-backend.sh`, to get a demonstrable dataset
+* After `./bin/start-dev.sh`, to populate the local database
+
+**Usage**:
+
+```sh
+# Seed the deployed environment (URL read from Terraform outputs)
+./bin/seed-database.py
+
+# Seed a specific deployment, or the local dev proxy
+./bin/seed-database.py --url https://{lambda-url}.lambda-url.us-east-2.on.aws
+./bin/seed-database.py --url http://localhost:3001
+
+# Check connectivity without writing anything
+./bin/seed-database.py --dry-run
+```
+
+Every seeded account shares the password printed in the summary
+(`Workshop#2026` by default, override with `--password`).
+
+**Known limitation**: because seeding goes through the API, every record is
+created with the current timestamp, so `GET /dashboard/sla` reports averages of
+`0.0` hours. Status counts, hotspots, escalations and workload are all accurate;
+only the elapsed-time metrics need real activity over time to become meaningful.
 
 ### `setup-participant.sh`
 
