@@ -93,11 +93,35 @@ dev proxy on port 3001, which strips the same prefix. Both are written into
 --audit-level=high` and a production build; only if all pass does it run
 `./bin/deploy-frontend.sh aws` and smoke-test the CloudFront URL.
 
-> **The gate is not yet a real test gate.** There are no frontend unit tests, so
-> a build failure catches a bad import or invalid JSX but not a behavioural
-> regression. Adding Vitest and React Testing Library specs plus a `test` script
-> to `package.json` is enough — the workflow already runs `npm test` when that
-> script exists, and only warns when it does not.
+## Tests
+
+```sh
+npm test           # vitest run, single pass - what CI runs
+npm run test:watch # watch mode while developing
+npm run coverage   # v8 coverage report
+```
+
+70 tests across the API client, the Redux slices and the components. They
+concentrate on behaviour a production build cannot catch:
+
+* `services/api.test.js` — empty filters are dropped from query strings (the
+  API rejects `""` for enum parameters), the error envelope is unwrapped, a 204
+  returns null, and a network failure becomes a readable message.
+* `store/incidentsSlice.test.js` — changing a filter returns to page one, and a
+  write refreshes both the detail view and the matching list row without
+  disturbing its neighbours.
+* `store/authSlice.test.js` — a restored token that turns out to be expired is
+  discarded rather than leaving a half-signed-in state.
+* `components/IncidentList.test.jsx` — the responsive switch, with
+  `react-responsive` mocked so the breakpoint is deterministic.
+* `components/ProtectedRoute.test.jsx` — the role guard, including that it waits
+  for the session check before judging a role.
+* `pages/LoginPage.test.jsx` — the full sign-in path against a real store with
+  only `fetch` stubbed.
+
+The suite was mutation-checked: removing the page reset in `setFilters` and
+inverting the responsive breakpoint each made it fail, so it detects the
+regressions it claims to.
 
 See `backend/facility-api/README.md` for the repository secrets both deploy
 workflows need, and for why this is GitHub Actions rather than CodePipeline.

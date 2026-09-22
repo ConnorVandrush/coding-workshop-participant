@@ -7,6 +7,20 @@ export default defineConfig({
   server: {
     port: 3000
   },
+  test: {
+    // Components render into jsdom; the slice and service tests need no DOM but
+    // share the environment so there is a single config.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/test/setup.js',
+    css: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{js,jsx}'],
+      exclude: ['src/main.jsx', 'src/test/**']
+    }
+  },
   build: {
     rollupOptions: {
       output: {

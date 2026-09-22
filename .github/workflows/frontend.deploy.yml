@@ -3,12 +3,8 @@
 # See .github/workflows/backend.deploy.yml for why this is GitHub Actions rather
 # than CodePipeline.
 #
-# NOTE ON "TESTS": the frontend currently has no unit tests, so the gate here is
-# lint + dependency audit + a production build. A build failure catches real
-# breakage (a bad import, invalid JSX, a missing module), but it cannot catch a
-# behavioural regression. Add Vitest/React Testing Library specs and a `test`
-# script to frontend/package.json, then add a step below, to make this a real
-# test gate.
+# The gate is lint + dependency audit + the Vitest suite + a production build.
+# `npm test` runs `vitest run`, never watch mode, so it terminates in CI.
 #
 # Required repository secrets for the deploy job:
 #   PARTICIPANT_ID    - your participant id, e.g. 0922f9b2
@@ -67,14 +63,7 @@ jobs:
 
       - name: Run unit tests
         working-directory: frontend
-        # Runs the suite when one exists, and says so plainly when it does not,
-        # rather than reporting a green "tests passed" for nothing.
-        run: |
-          if node -e "process.exit(require('./package.json').scripts.test ? 0 : 1)"; then
-            npm test
-          else
-            echo "::warning::No frontend test script defined - only lint, audit and build gate this deploy."
-          fi
+        run: npm test
 
       - name: Build
         working-directory: frontend
