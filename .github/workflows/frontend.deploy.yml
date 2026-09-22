@@ -147,6 +147,15 @@ jobs:
             -backend-config="region=${AWS_REGION}"
           echo "Bucket: $(terraform output -raw s3_bucket_name)"
 
+      # deploy-frontend.sh runs `npm run build` without installing first, which
+      # works on a developer machine that already has node_modules but not in a
+      # clean job - and Deploy is a separate job from Test, so it does not
+      # inherit the earlier install.
+      - name: Install frontend dependencies
+        if: steps.guard.outputs.ready == 'true'
+        working-directory: frontend
+        run: npm install
+
       - name: Deploy frontend
         if: steps.guard.outputs.ready == 'true'
         env:
