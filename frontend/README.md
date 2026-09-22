@@ -101,8 +101,8 @@ npm run test:watch # watch mode while developing
 npm run coverage   # v8 coverage report
 ```
 
-139 tests across the API client, the Redux slices, the components and every
-page. They concentrate on behaviour a production build cannot catch:
+189 tests across the API client, the Redux slices, the components and every
+page (84% statement coverage). They concentrate on behaviour a production build cannot catch:
 
 * `services/api.test.js` — empty filters are dropped from query strings (the
   API rejects `""` for enum parameters), the error envelope is unwrapped, a 204
@@ -111,7 +111,10 @@ page. They concentrate on behaviour a production build cannot catch:
   both the detail view and the matching list row; a restored token that turns
   out to be expired is discarded rather than leaving a half-signed-in state.
 * `components/*.test.jsx` — the responsive table/card switch, the role guard
-  waiting for the session check before judging a role, and the chip vocabulary.
+  waiting for the session check before judging a role, the chip vocabulary, the
+  shell's per-role navigation and drawer behaviour, and the filter bar's flags
+  control, which maps one dropdown onto two mutually exclusive parameters and
+  has to clear whichever is not chosen.
 * `pages/*.test.jsx` — each page against a real store with only `fetch` stubbed,
   via the fake API in `src/test/utils.jsx`. These assert that the controls a
   page offers match what the API permits, that requests carry the right body,
