@@ -26,4 +26,9 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // Build config and end-to-end specs execute in Node, not the browser.
+    files: ['*.config.js', 'e2e/**/*.js'],
+    languageOptions: { globals: { ...globals.node } },
+  },
 ])

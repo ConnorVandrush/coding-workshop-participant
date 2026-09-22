@@ -130,6 +130,46 @@ fail.
 See `backend/facility-api/README.md` for the repository secrets both deploy
 workflows need, and for why this is GitHub Actions rather than CodePipeline.
 
+## End-to-end tests
+
+```sh
+# Against a running local stack (./bin/start-dev.sh, proxying on 3001)
+VITE_API_URL=http://localhost:3001 npm run build
+npm run e2e          # or npm run e2e:ui for the interactive runner
+
+# Against any already-running deployment
+E2E_BASE_URL=https://your-distribution.cloudfront.net npm run e2e
+```
+
+13 Playwright tests over the journeys the workshop calls critical:
+
+* `e2e/auth.spec.js` — anonymous redirect, bad credentials, off-domain
+  registration, and a session surviving a reload then ending on sign out.
+* `e2e/incident-lifecycle.spec.js` — the whole journey across three personas in
+  one test built from `test.step()`s: an employee reports, an admin assigns,
+  the engineer progresses, blocks with a reason, unblocks and resolves, and the
+  reporter closes. Plus the note thread, internal notes staying invisible to
+  employees, and escalation that only an admin can clear.
+* `e2e/rbac.spec.js` — per-role scoping, and that `/users` is unreachable by URL
+  for an employee rather than rendering a page that would only 403.
+* `e2e/responsive.spec.js` — on a Pixel 5 profile, the table becomes cards and
+  navigation collapses behind a drawer.
+
+They run against a production build served by `vite preview`, so they exercise
+the bundle that actually deploys. `workers: 1` because the specs share one
+database and mutate incidents.
+
+Every test creates the records it needs and can be run on its own — a journey
+is modelled as one test made of `test.step()`s rather than as several tests
+that depend on each other's order. Titles carry a timestamp and a random
+suffix so repeated runs never collide, and assertions prefer durable page
+state over the toast, which auto-hides and would otherwise make a slow run
+fail for the wrong reason.
+
+CI runs them in `.github/workflows/e2e.yml`, which stands up PostgreSQL, the
+backend under uvicorn and the built frontend inside the job. No AWS access and
+no secrets, so it runs on pull requests from forks too.
+
 ## Which backend the frontend talks to
 
 `npm run dev` targets your local backend; a production build targets the

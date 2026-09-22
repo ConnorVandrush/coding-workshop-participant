@@ -12,6 +12,9 @@ export default defineConfig({
     // share the environment so there is a single config.
     environment: 'jsdom',
     globals: true,
+    // The default glob would also match e2e/*.spec.js, which are Playwright
+    // specs and cannot run under Vitest.
+    include: ['src/**/*.{test,spec}.{js,jsx}'],
     setupFiles: './src/test/setup.js',
     css: false,
     coverage: {
