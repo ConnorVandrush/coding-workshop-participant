@@ -5,7 +5,7 @@
  * decided by the API, which scopes rows to the caller's role.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -24,7 +24,9 @@ import AddIcon from '@mui/icons-material/Add';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import IncidentFilters from '../components/IncidentFilters';
+import LiveStatus from '../components/LiveStatus';
 import IncidentList from '../components/IncidentList';
+import usePolling from '../hooks/usePolling';
 import {
   fetchBuildings,
   fetchFloors,
@@ -67,7 +69,9 @@ export default function IncidentsPage() {
   const filters = useSelector(selectFilters);
   const buildings = useSelector(selectBuildings);
   const floors = useSelector(selectFloors);
-  const { total, page, pageSize, listStatus, listError, saving } = useSelector((state) => state.incidents);
+  const { total, page, pageSize, listStatus, listError, saving, listUpdatedAt } = useSelector(
+    (state) => state.incidents,
+  );
 
   const [dialogOpen, setDialogOpen] = useState(false);
   // Per-field messages from a rejected submission.
@@ -120,6 +124,10 @@ export default function IncidentsPage() {
     }
   };
 
+  // Suspended while a report is being submitted, so a refresh cannot race it.
+  const refresh = useCallback(() => dispatch(fetchIncidents()), [dispatch]);
+  usePolling(refresh, { enabled: !dialogOpen && !saving });
+
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const canSubmit = draft.title.trim().length > 0 && draft.description.trim().length > 0;
 
@@ -138,9 +146,17 @@ export default function IncidentsPage() {
             {total} matching {total === 1 ? 'incident' : 'incidents'}
           </Typography>
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>
-          Report incident
-        </Button>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <LiveStatus
+            loading={listStatus === 'loading'}
+            updatedAt={listUpdatedAt}
+            onRefresh={refresh}
+            label="incidents"
+          />
+          <Button variant="contained" startIcon={<AddIcon />} onClick={() => setDialogOpen(true)}>
+            Report incident
+          </Button>
+        </Stack>
       </Stack>
 
       <IncidentFilters

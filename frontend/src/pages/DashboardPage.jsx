@@ -7,7 +7,7 @@
  * admin-only, because it is management information.
  */
 
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -26,7 +26,9 @@ import Typography from '@mui/material/Typography';
 import PropTypes from 'prop-types';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
+import LiveStatus from '../components/LiveStatus';
 import WorkflowDiagram from '../components/WorkflowDiagram';
+import usePolling from '../hooks/usePolling';
 import {
   fetchDashboard,
   fetchWorkflow,
@@ -35,6 +37,7 @@ import {
   selectSummary,
   selectWorkflow,
   selectWorkload,
+  selectDashboardUpdatedAt,
 } from '../store/dashboardSlice';
 import { selectUser } from '../store/authSlice';
 import { setFilters } from '../store/incidentsSlice';
@@ -143,12 +146,17 @@ export default function DashboardPage() {
   const sla = useSelector(selectSla);
   const workload = useSelector(selectWorkload);
   const workflow = useSelector(selectWorkflow);
+  const updatedAt = useSelector(selectDashboardUpdatedAt);
   const { status, error } = useSelector((state) => state.dashboard);
 
   useEffect(() => {
     dispatch(fetchDashboard());
     dispatch(fetchWorkflow());
   }, [dispatch]);
+
+  // The workflow graph is static, so only the figures are refreshed.
+  const refresh = useCallback(() => dispatch(fetchDashboard()), [dispatch]);
+  usePolling(refresh);
 
   /**
    * Jump to the incident list pre-filtered.
@@ -168,9 +176,21 @@ export default function DashboardPage() {
 
   return (
     <Box sx={{ py: 3 }}>
-      <Typography variant="h1" gutterBottom>
-        {ROLE_LABELS[summary.scope] ?? 'Dashboard'} overview
-      </Typography>
+      <Stack
+        direction="row"
+        spacing={2}
+        sx={{ alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap' }}
+      >
+        <Typography variant="h1" gutterBottom>
+          {ROLE_LABELS[summary.scope] ?? 'Dashboard'} overview
+        </Typography>
+        <LiveStatus
+          loading={status === 'loading'}
+          updatedAt={updatedAt}
+          onRefresh={refresh}
+          label="dashboard"
+        />
+      </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         {isAdmin
           ? 'Every incident across the estate.'

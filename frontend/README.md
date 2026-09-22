@@ -86,6 +86,34 @@ cache behaviour forwards to the Lambda with the prefix intact; locally it is the
 dev proxy on port 3001, which strips the same prefix. Both are written into
 `.env.local` by `./bin/generate-env.sh`.
 
+## Keeping data current
+
+The dashboard, the incident list and the incident detail view refresh
+themselves. `src/hooks/usePolling.js` re-fetches on an interval
+(`VITE_POLL_INTERVAL_MS`, 20s by default) and `LiveStatus` shows how fresh the
+data is with a manual refresh alongside it.
+
+**Why polling and not a socket.** Lambda Function URLs do not support the
+WebSocket upgrade, and every managed alternative — API Gateway WebSockets,
+AppSync, IoT Core — is outside the permissions this deployment has, so a
+persistent connection is not available to it. For incident tracking a short
+poll is a fair substitute: no infrastructure, identical behaviour against
+LocalStack and AWS, and it degrades to "slightly stale" rather than to a broken
+connection.
+
+Two behaviours keep it from being wasteful or disruptive:
+
+* **Nothing is requested while the tab is hidden**, and returning to the tab
+  refreshes immediately rather than waiting out the rest of an interval.
+* **Polling is suspended while a write is in flight** — and while the report
+  dialog is open — so a refresh cannot race a response or move the page under
+  someone who is typing.
+
+The callback is held in a ref so that a new function identity on each render
+does not restart the timer. Without that, a component re-rendering faster than
+the interval would reset the timer before it ever fired and polling would
+silently never happen.
+
 ## Form validation
 
 Validation happens in three places, deliberately:

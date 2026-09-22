@@ -50,6 +50,10 @@ const initialState = {
   workflow: null,
   status: 'idle',
   error: null,
+  // When the figures last arrived, so the UI can say how fresh they are.
+  // Date.now() in a reducer is impure, but only affects time-travel debugging
+  // and keeps the timestamp as real state rather than component bookkeeping.
+  lastUpdated: null,
 };
 
 const dashboardSlice = createSlice({
@@ -68,6 +72,7 @@ const dashboardSlice = createSlice({
         state.hotspots = action.payload.hotspots;
         state.sla = action.payload.sla;
         state.workload = action.payload.workload;
+        state.lastUpdated = Date.now();
       })
       .addCase(fetchDashboard.rejected, (state, action) => {
         state.status = 'failed';
@@ -79,6 +84,8 @@ const dashboardSlice = createSlice({
   },
 });
 
+/** @returns {number|null} When the figures last arrived. */
+export const selectDashboardUpdatedAt = (state) => state.dashboard.lastUpdated;
 /** @returns {object|null} Headline counters for the current role. */
 export const selectSummary = (state) => state.dashboard.summary;
 /** @returns {object|null} Recurring-issue hotspots. */

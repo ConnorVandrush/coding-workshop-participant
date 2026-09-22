@@ -7,7 +7,7 @@
  * dead-end buttons.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -34,7 +34,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
+import LiveStatus from '../components/LiveStatus';
 import WorkflowDiagram from '../components/WorkflowDiagram';
+import usePolling from '../hooks/usePolling';
 import { EscalationChip, PriorityChip, StatusChip } from '../components/StatusChip';
 import { selectUser } from '../store/authSlice';
 import { fetchEngineers, selectEngineers } from '../store/engineersSlice';
@@ -70,7 +72,7 @@ export default function IncidentDetailPage() {
   const engineers = useSelector(selectEngineers);
   const workflow = useSelector(selectWorkflow);
   const user = useSelector(selectUser);
-  const { currentStatus, saving } = useSelector((state) => state.incidents);
+  const { currentStatus, saving, currentUpdatedAt } = useSelector((state) => state.incidents);
 
   const [noteBody, setNoteBody] = useState('');
   const [noteInternal, setNoteInternal] = useState(false);
@@ -87,6 +89,15 @@ export default function IncidentDetailPage() {
       dispatch(clearCurrent());
     };
   }, [dispatch, incidentId]);
+
+  // Refreshing the incident and its notes is what makes the thread feel live
+  // for the reporter while an engineer is working on it. Suspended while the
+  // user is mid-write so a poll cannot overwrite a response in flight.
+  const refresh = useCallback(() => {
+    dispatch(fetchIncident(incidentId));
+    dispatch(fetchNotes(incidentId));
+  }, [dispatch, incidentId]);
+  usePolling(refresh, { enabled: !saving });
 
   const isAdmin = user?.role === 'facility_admin';
   const isEngineer = user?.role === 'engineer';
@@ -203,6 +214,12 @@ export default function IncidentDetailPage() {
         <Typography variant="h1" sx={{ flexGrow: 1 }}>
           #{incident.id}
         </Typography>
+        <LiveStatus
+          loading={currentStatus === 'loading'}
+          updatedAt={currentUpdatedAt}
+          onRefresh={refresh}
+          label="incident"
+        />
         {isAdmin ? (
           <Tooltip title="Delete incident">
             <IconButton color="error" onClick={removeIncident} aria-label="Delete incident">

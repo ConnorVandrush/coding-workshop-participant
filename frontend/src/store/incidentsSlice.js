@@ -118,6 +118,9 @@ const initialState = {
   currentStatus: 'idle',
   notes: [],
   saving: false,
+  // When each view last arrived, so the UI can say how fresh it is.
+  listUpdatedAt: null,
+  currentUpdatedAt: null,
 };
 
 const incidentsSlice = createSlice({
@@ -155,6 +158,7 @@ const incidentsSlice = createSlice({
         state.listStatus = 'succeeded';
         state.items = action.payload.items;
         state.total = action.payload.total;
+        state.listUpdatedAt = Date.now();
       })
       .addCase(fetchIncidents.rejected, (state, action) => {
         state.listStatus = 'failed';
@@ -166,6 +170,7 @@ const incidentsSlice = createSlice({
       .addCase(fetchIncident.fulfilled, (state, action) => {
         state.currentStatus = 'succeeded';
         state.current = action.payload;
+        state.currentUpdatedAt = Date.now();
       })
       .addCase(fetchIncident.rejected, (state) => {
         state.currentStatus = 'failed';
@@ -219,6 +224,10 @@ const incidentsSlice = createSlice({
 
 export const { setFilters, resetFilters, setPage, clearCurrent } = incidentsSlice.actions;
 
+/** @returns {number|null} When the list last arrived. */
+export const selectListUpdatedAt = (state) => state.incidents.listUpdatedAt;
+/** @returns {number|null} When the open incident last arrived. */
+export const selectCurrentUpdatedAt = (state) => state.incidents.currentUpdatedAt;
 /** @returns {Array} The incidents on the current page. */
 export const selectIncidents = (state) => state.incidents.items;
 /** @returns {object} The active filter values. */
