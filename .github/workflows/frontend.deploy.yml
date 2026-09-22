@@ -46,13 +46,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+        # No npm cache: .gitignore excludes package-lock.json*, so a clean
+        # checkout has no lockfile and setup-node's cache step fails outright
+        # with "Dependencies lock file is not found".
 
       - name: Install dependencies
         working-directory: frontend
-        # `npm ci` when a lockfile is present, so CI installs exactly what was
-        # committed; fall back to `npm install` when it is not.
+        # This repository git-ignores package-lock.json, so `npm install` is the
+        # normal path here; `npm ci` is used only if a lockfile is ever committed.
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
