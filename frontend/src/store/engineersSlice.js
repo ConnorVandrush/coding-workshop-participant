@@ -5,6 +5,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request } from '../services/api';
+import { errorMessage, rejectValue } from './thunkUtils';
 
 /**
  * Run a thunk body with the stored token, converting API errors to messages.
@@ -17,7 +18,7 @@ async function withToken(body, { getState, rejectWithValue }) {
   try {
     return await body(getState().auth.token);
   } catch (error) {
-    return rejectWithValue(error.describe());
+    return rejectWithValue(rejectValue(error));
   }
 }
 
@@ -73,7 +74,7 @@ const engineersSlice = createSlice({
       })
       .addCase(fetchEngineers.rejected, (state, action) => {
         state.status = 'failed';
-        state.error = action.payload ?? 'Could not load engineers';
+        state.error = errorMessage(action.payload, 'Could not load engineers');
       })
       .addCase(fetchUsers.fulfilled, (state, action) => {
         state.users = action.payload;

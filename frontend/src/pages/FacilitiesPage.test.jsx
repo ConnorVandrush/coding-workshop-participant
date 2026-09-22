@@ -108,7 +108,7 @@ describe('creating', () => {
 
     const add = screen.getByRole('button', { name: /^Add$/i });
     expect(add).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Name'), 'Tech Pavilion');
+    await userEvent.type(screen.getByLabelText(/^Name/), 'Tech Pavilion');
     expect(add).toBeEnabled();
   });
 
@@ -118,7 +118,7 @@ describe('creating', () => {
     renderPage(<FacilitiesPage />, { user: ADMIN });
     await screen.findByText('Add a building');
 
-    await userEvent.type(screen.getByLabelText('Name'), 'Tech Pavilion');
+    await userEvent.type(screen.getByLabelText(/^Name/), 'Tech Pavilion');
     await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
 
     await waitFor(() => {
@@ -126,6 +126,66 @@ describe('creating', () => {
       expect(JSON.parse(post[1].body)).toEqual({ name: 'Tech Pavilion', address: null });
     });
     expect(await screen.findByText('Building created')).toBeInTheDocument();
+  });
+
+  it('shows a field-level validation message beside the input it refers to', async () => {
+    // The API reports failures per field; showing them only in a toast leaves
+    // the user hunting for which input was wrong.
+    api({
+      'POST /buildings': {
+        status: 400,
+        body: {
+          error: {
+            status: 400,
+            type: 'validation_error',
+            message: 'Request payload failed validation',
+            details: [{ field: 'body.name', message: 'name must be at least 1 character' }],
+          },
+        },
+      },
+    });
+    renderPage(<FacilitiesPage />, { user: ADMIN });
+    await screen.findByText('Add a building');
+
+    await userEvent.type(screen.getByLabelText(/^Name/), 'x');
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+
+    const nameField = await screen.findByLabelText(/^Name/);
+    expect(await screen.findByText('name must be at least 1 character')).toBeInTheDocument();
+    expect(nameField).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('clears the field error once the input is edited again', async () => {
+    api({
+      'POST /buildings': {
+        status: 400,
+        body: {
+          error: {
+            status: 400,
+            type: 'validation_error',
+            message: 'Request payload failed validation',
+            details: [{ field: 'body.name', message: 'name is not acceptable' }],
+          },
+        },
+      },
+    });
+    renderPage(<FacilitiesPage />, { user: ADMIN });
+    await screen.findByText('Add a building');
+
+    await userEvent.type(screen.getByLabelText(/^Name/), 'x');
+    await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+    expect(await screen.findByText('name is not acceptable')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/^Name/), 'y');
+    expect(screen.queryByText('name is not acceptable')).not.toBeInTheDocument();
+  });
+
+  it('marks the required fields so they are visually distinguishable', async () => {
+    api();
+    renderPage(<FacilitiesPage />, { user: ADMIN });
+    await screen.findByText('Add a building');
+    expect(screen.getByLabelText(/^Name/)).toBeRequired();
+    expect(screen.getByLabelText(/^Address/)).not.toBeRequired();
   });
 
   it('surfaces a duplicate name rejection', async () => {
@@ -138,7 +198,7 @@ describe('creating', () => {
     renderPage(<FacilitiesPage />, { user: ADMIN });
     await screen.findByText('Add a building');
 
-    await userEvent.type(screen.getByLabelText('Name'), 'HQ North');
+    await userEvent.type(screen.getByLabelText(/^Name/), 'HQ North');
     await userEvent.click(screen.getByRole('button', { name: /^Add$/i }));
 
     expect(await screen.findByText('A building with that name already exists')).toBeInTheDocument();

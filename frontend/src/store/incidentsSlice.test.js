@@ -81,7 +81,7 @@ describe('list loading', () => {
   });
 
   it('surfaces a rejection message instead of failing silently', () => {
-    const state = reducer(initial(), { type: fetchIncidents.rejected.type, payload: 'boom' });
+    const state = reducer(initial(), { type: fetchIncidents.rejected.type, payload: { message: 'boom' } });
     expect(state.listStatus).toBe('failed');
     expect(state.listError).toBe('boom');
   });

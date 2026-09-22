@@ -86,6 +86,24 @@ cache behaviour forwards to the Lambda with the prefix intact; locally it is the
 dev proxy on port 3001, which strips the same prefix. Both are written into
 `.env.local` by `./bin/generate-env.sh`.
 
+## Form validation
+
+Validation happens in three places, deliberately:
+
+* **Before submission** — submit stays disabled until the required fields are
+  filled, so an obviously incomplete request is never sent.
+* **Beside the field** — the API reports validation failures per field
+  (`{"field": "body.name", "message": "..."}`). `ApiError.fieldErrors()` strips
+  the `body.` prefix, thunks reject with `{message, fields}`, and each form puts
+  the message on the input it refers to and marks it `aria-invalid`. Editing the
+  input clears it.
+* **In a toast** — for failures that belong to no single field, such as a
+  conflict or a permission refusal.
+
+Required fields carry the `required` prop so they are marked visually, and
+inputs are disabled while a submission is in flight rather than only the button,
+so a form cannot be edited mid-request.
+
 ## Continuous deployment
 
 `.github/workflows/frontend.deploy.yml` runs on any push to `main` touching

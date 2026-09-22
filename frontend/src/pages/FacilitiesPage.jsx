@@ -44,6 +44,7 @@ import {
   selectFloors,
 } from '../store/facilitiesSlice';
 import { notify } from '../store/uiSlice';
+import { errorFields, errorMessage } from '../store/thunkUtils';
 
 /**
  * Render the facilities page.
@@ -61,6 +62,10 @@ export default function FacilitiesPage() {
   const [buildingDraft, setBuildingDraft] = useState({ name: '', address: '' });
   const [floorDraft, setFloorDraft] = useState({ level: '', name: '' });
   const [seatDrafts, setSeatDrafts] = useState({});
+  // Per-field messages from a rejected request, so each one can be shown
+  // beside the input that caused it rather than only in a toast.
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const isAdmin = user?.role === 'facility_admin';
 
@@ -81,9 +86,10 @@ export default function FacilitiesPage() {
    */
   const report = (result, successMessage) => {
     const ok = result.meta.requestStatus === 'fulfilled';
+    setFieldErrors(ok ? {} : errorFields(result.payload));
     dispatch(
       notify({
-        message: ok ? successMessage : (result.payload ?? 'The request failed'),
+        message: ok ? successMessage : errorMessage(result.payload, 'The request failed'),
         severity: ok ? 'success' : 'error',
       }),
     );
@@ -92,18 +98,22 @@ export default function FacilitiesPage() {
 
   /** Create a building from the draft form. */
   const addBuilding = async () => {
+    setSaving(true);
     const result = await dispatch(createBuilding({ name: buildingDraft.name, address: buildingDraft.address || null }));
+    setSaving(false);
     if (report(result, 'Building created')) setBuildingDraft({ name: '', address: '' });
   };
 
   /** Add a floor to the selected building. */
   const addFloor = async () => {
+    setSaving(true);
     const result = await dispatch(
       createFloor({
         buildingId: selectedBuildingId,
         payload: { level: Number(floorDraft.level), name: floorDraft.name || null },
       }),
     );
+    setSaving(false);
     if (report(result, 'Floor added')) setFloorDraft({ level: '', name: '' });
   };
 
@@ -115,7 +125,9 @@ export default function FacilitiesPage() {
   const addSeat = async (floorId) => {
     const code = (seatDrafts[floorId] ?? '').trim();
     if (!code) return;
+    setSaving(true);
     const result = await dispatch(createSeat({ floorId, payload: { code } }));
+    setSaving(false);
     if (report(result, 'Seat added')) setSeatDrafts({ ...seatDrafts, [floorId]: '' });
   };
 
@@ -150,14 +162,24 @@ export default function FacilitiesPage() {
               <TextField
                 label="Name"
                 fullWidth
+                required
+                disabled={saving}
+                error={Boolean(fieldErrors.name)}
+                helperText={fieldErrors.name ?? ' '}
                 value={buildingDraft.name}
-                onChange={(event) => setBuildingDraft({ ...buildingDraft, name: event.target.value })}
+                onChange={(event) => {
+                  setBuildingDraft({ ...buildingDraft, name: event.target.value });
+                  setFieldErrors({});
+                }}
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 5 }}>
               <TextField
                 label="Address"
                 fullWidth
+                disabled={saving}
+                error={Boolean(fieldErrors.address)}
+                helperText={fieldErrors.address ?? ' '}
                 value={buildingDraft.address}
                 onChange={(event) => setBuildingDraft({ ...buildingDraft, address: event.target.value })}
               />
@@ -233,13 +255,22 @@ export default function FacilitiesPage() {
                     <TextField
                       label="Level"
                       type="number"
+                      required
+                      disabled={saving}
+                      error={Boolean(fieldErrors.level)}
+                      helperText={fieldErrors.level ?? ' '}
                       value={floorDraft.level}
-                      onChange={(event) => setFloorDraft({ ...floorDraft, level: event.target.value })}
-                      sx={{ width: { sm: 120 } }}
+                      onChange={(event) => {
+                        setFloorDraft({ ...floorDraft, level: event.target.value });
+                        setFieldErrors({});
+                      }}
+                      sx={{ width: { sm: 140 } }}
                     />
                     <TextField
                       label="Floor name"
                       fullWidth
+                      disabled={saving}
+                      helperText=" "
                       value={floorDraft.name}
                       onChange={(event) => setFloorDraft({ ...floorDraft, name: event.target.value })}
                     />
@@ -298,10 +329,15 @@ export default function FacilitiesPage() {
                       <Stack direction="row" spacing={1}>
                         <TextField
                           label="Seat code"
+                          required
+                          disabled={saving}
+                          error={Boolean(fieldErrors.code)}
+                          helperText={fieldErrors.code ?? ' '}
                           value={seatDrafts[floor.id] ?? ''}
-                          onChange={(event) =>
-                            setSeatDrafts({ ...seatDrafts, [floor.id]: event.target.value })
-                          }
+                          onChange={(event) => {
+                            setSeatDrafts({ ...seatDrafts, [floor.id]: event.target.value });
+                            setFieldErrors({});
+                          }}
                         />
                         <Button onClick={() => addSeat(floor.id)}>Add seat</Button>
                         <Box sx={{ flexGrow: 1 }} />

@@ -9,6 +9,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request } from '../services/api';
+import { errorMessage, rejectValue } from './thunkUtils';
 
 /** Load summary, hotspots, SLA and (for admins) engineer workload together. */
 export const fetchDashboard = createAsyncThunk(
@@ -27,7 +28,7 @@ export const fetchDashboard = createAsyncThunk(
         user?.role === 'facility_admin' ? await request('/dashboard/engineers', { token }) : [];
       return { summary, hotspots, sla, workload };
     } catch (error) {
-      return rejectWithValue(error.describe());
+      return rejectWithValue(rejectValue(error));
     }
   },
 );
@@ -37,7 +38,7 @@ export const fetchWorkflow = createAsyncThunk('dashboard/fetchWorkflow', async (
   try {
     return await request('/workflow');
   } catch (error) {
-    return rejectWithValue(error.describe());
+    return rejectWithValue(rejectValue(error));
   }
 });
 
@@ -70,7 +71,7 @@ const dashboardSlice = createSlice({
       })
       .addCase(fetchDashboard.rejected, (state, action) => {
         state.status = 'failed';
-        state.error = action.payload ?? 'Could not load the dashboard';
+        state.error = errorMessage(action.payload, 'Could not load the dashboard');
       })
       .addCase(fetchWorkflow.fulfilled, (state, action) => {
         state.workflow = action.payload;

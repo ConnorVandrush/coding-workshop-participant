@@ -9,6 +9,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request } from '../services/api';
+import { errorMessage, rejectValue } from './thunkUtils';
 
 const TOKEN_KEY = 'acme.facility.token';
 
@@ -44,7 +45,7 @@ export const login = createAsyncThunk('auth/login', async ({ email, password }, 
   try {
     return await request('/auth/login', { method: 'POST', body: { email, password } });
   } catch (error) {
-    return rejectWithValue(error.describe());
+    return rejectWithValue(rejectValue(error));
   }
 });
 
@@ -58,7 +59,7 @@ export const register = createAsyncThunk(
         body: { email, full_name: fullName, password },
       });
     } catch (error) {
-      return rejectWithValue(error.describe());
+      return rejectWithValue(rejectValue(error));
     }
     return dispatch(login({ email, password })).unwrap();
   },
@@ -71,7 +72,7 @@ export const loadSession = createAsyncThunk('auth/loadSession', async (_, { getS
   try {
     return await request('/auth/me', { token });
   } catch (error) {
-    return rejectWithValue(error.describe());
+    return rejectWithValue(rejectValue(error));
   }
 });
 
@@ -136,7 +137,7 @@ const authSlice = createSlice({
         (action) => [login.rejected.type, register.rejected.type].includes(action.type),
         (state, action) => {
           state.status = 'failed';
-          state.error = action.payload ?? 'Sign in failed';
+          state.error = errorMessage(action.payload, 'Sign in failed');
         },
       );
   },

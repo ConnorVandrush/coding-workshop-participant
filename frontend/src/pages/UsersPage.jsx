@@ -26,6 +26,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { selectUser } from '../store/authSlice';
 import { fetchUsers, selectUsers, updateUserRole, updateUserStatus } from '../store/engineersSlice';
 import { notify } from '../store/uiSlice';
+import { errorMessage } from '../store/thunkUtils';
 import { ROLE_LABELS, formatDateTime } from '../theme';
 
 /**
@@ -54,7 +55,7 @@ export default function UsersPage() {
     const ok = result.meta.requestStatus === 'fulfilled';
     dispatch(
       notify({
-        message: ok ? successMessage : (result.payload ?? 'The request failed'),
+        message: ok ? successMessage : errorMessage(result.payload, 'The request failed'),
         severity: ok ? 'success' : 'error',
       }),
     );

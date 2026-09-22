@@ -38,7 +38,7 @@ describe('buildings', () => {
   });
 
   it('surfaces a load failure', () => {
-    const state = reducer(initial(), { type: fetchBuildings.rejected.type, payload: 'nope' });
+    const state = reducer(initial(), { type: fetchBuildings.rejected.type, payload: { message: 'nope' } });
     expect(state.status).toBe('failed');
     expect(state.error).toBe('nope');
   });

@@ -39,7 +39,7 @@ describe('roster', () => {
   it('surfaces a load failure with a fallback message', () => {
     expect(reducer(initial(), { type: fetchEngineers.rejected.type }).error)
       .toBe('Could not load engineers');
-    expect(reducer(initial(), { type: fetchEngineers.rejected.type, payload: 'boom' }).error)
+    expect(reducer(initial(), { type: fetchEngineers.rejected.type, payload: { message: 'boom' } }).error)
       .toBe('boom');
   });
 

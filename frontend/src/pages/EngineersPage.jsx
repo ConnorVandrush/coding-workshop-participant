@@ -39,6 +39,7 @@ import {
   updateEngineer,
 } from '../store/engineersSlice';
 import { notify } from '../store/uiSlice';
+import { errorFields, errorMessage } from '../store/thunkUtils';
 import { CATEGORIES, humanise } from '../theme';
 
 /**
@@ -55,6 +56,10 @@ export default function EngineersPage() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState({ user_id: '', specialties: [], max_active_incidents: 8, phone: '' });
+  // Per-field messages from a rejected request, shown beside the input each
+  // one refers to rather than only in a toast.
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const isAdmin = user?.role === 'facility_admin';
 
@@ -72,9 +77,10 @@ export default function EngineersPage() {
    */
   const report = (result, successMessage) => {
     const ok = result.meta.requestStatus === 'fulfilled';
+    setFieldErrors(ok ? {} : errorFields(result.payload));
     dispatch(
       notify({
-        message: ok ? successMessage : (result.payload ?? 'The request failed'),
+        message: ok ? successMessage : errorMessage(result.payload, 'The request failed'),
         severity: ok ? 'success' : 'error',
       }),
     );
@@ -83,6 +89,7 @@ export default function EngineersPage() {
 
   /** Create an engineer profile from the dialog. */
   const handleCreate = async () => {
+    setSaving(true);
     const result = await dispatch(
       createEngineer({
         user_id: Number(draft.user_id),
@@ -91,6 +98,7 @@ export default function EngineersPage() {
         phone: draft.phone || null,
       }),
     );
+    setSaving(false);
     if (report(result, 'Engineer profile created')) {
       setDialogOpen(false);
       setDraft({ user_id: '', specialties: [], max_active_incidents: 8, phone: '' });
@@ -245,9 +253,15 @@ export default function EngineersPage() {
               select
               label="Account"
               fullWidth
+              required
+              disabled={saving}
+              error={Boolean(fieldErrors.user_id)}
               value={draft.user_id}
-              onChange={(event) => setDraft({ ...draft, user_id: event.target.value })}
-              helperText="The person must already have registered"
+              onChange={(event) => {
+                setDraft({ ...draft, user_id: event.target.value });
+                setFieldErrors({});
+              }}
+              helperText={fieldErrors.user_id ?? 'The person must already have registered'}
             >
               {candidates.map((candidate) => (
                 <MenuItem key={candidate.id} value={candidate.id}>
@@ -273,12 +287,22 @@ export default function EngineersPage() {
               label="Maximum active incidents"
               type="number"
               fullWidth
+              required
+              disabled={saving}
+              error={Boolean(fieldErrors.max_active_incidents)}
+              helperText={fieldErrors.max_active_incidents ?? ' '}
               value={draft.max_active_incidents}
-              onChange={(event) => setDraft({ ...draft, max_active_incidents: event.target.value })}
+              onChange={(event) => {
+                setDraft({ ...draft, max_active_incidents: event.target.value });
+                setFieldErrors({});
+              }}
             />
             <TextField
               label="Phone"
               fullWidth
+              disabled={saving}
+              error={Boolean(fieldErrors.phone)}
+              helperText={fieldErrors.phone ?? ' '}
               value={draft.phone}
               onChange={(event) => setDraft({ ...draft, phone: event.target.value })}
             />
@@ -286,7 +310,7 @@ export default function EngineersPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreate} disabled={!draft.user_id}>
+          <Button variant="contained" onClick={handleCreate} disabled={!draft.user_id || saving}>
             Create profile
           </Button>
         </DialogActions>

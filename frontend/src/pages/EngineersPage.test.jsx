@@ -107,7 +107,7 @@ describe('creating a profile', () => {
     renderPage(<EngineersPage />, { user: ADMIN });
     await userEvent.click(await screen.findByRole('button', { name: /Add engineer/i }));
 
-    await userEvent.click(within(await screen.findByRole('dialog')).getByLabelText('Account'));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByLabelText(/^Account/));
     const options = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(options.some((o) => o.includes('Nora Feld'))).toBe(true);
     expect(options.some((o) => o.includes('Sam Okafor'))).toBe(false);
@@ -127,7 +127,7 @@ describe('creating a profile', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Add engineer/i }));
 
     const dialog = await screen.findByRole('dialog');
-    await userEvent.click(within(dialog).getByLabelText('Account'));
+    await userEvent.click(within(dialog).getByLabelText(/^Account/));
     await userEvent.click(await screen.findByRole('option', { name: /Nora Feld/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: /Create profile/i }));
 

@@ -42,6 +42,7 @@ import {
   setPage,
 } from '../store/incidentsSlice';
 import { notify } from '../store/uiSlice';
+import { errorFields, errorMessage } from '../store/thunkUtils';
 import { CATEGORIES, PRIORITY_META, humanise } from '../theme';
 
 const EMPTY_DRAFT = {
@@ -69,6 +70,8 @@ export default function IncidentsPage() {
   const { total, page, pageSize, listStatus, listError, saving } = useSelector((state) => state.incidents);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Per-field messages from a rejected submission.
+  const [fieldErrors, setFieldErrors] = useState({});
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const seats = useSelector((state) => state.facilities.seatsByFloor[draft.floor_id] ?? []);
 
@@ -106,13 +109,14 @@ export default function IncidentsPage() {
     if (draft.seat_id) payload.seat_id = Number(draft.seat_id);
 
     const result = await dispatch(createIncident(payload));
+    setFieldErrors(result.meta.requestStatus === 'fulfilled' ? {} : errorFields(result.payload));
     if (result.meta.requestStatus === 'fulfilled') {
       dispatch(notify({ message: `Incident #${result.payload.id} reported`, severity: 'success' }));
       setDialogOpen(false);
       setDraft(EMPTY_DRAFT);
       dispatch(fetchIncidents());
     } else {
-      dispatch(notify({ message: result.payload ?? 'Could not report the incident', severity: 'error' }));
+      dispatch(notify({ message: errorMessage(result.payload, 'Could not report the incident'), severity: 'error' }));
     }
   };
 
@@ -171,8 +175,14 @@ export default function IncidentsPage() {
                 label="Title"
                 fullWidth
                 required
+                disabled={saving}
+                error={Boolean(fieldErrors.title)}
+                helperText={fieldErrors.title ?? ' '}
                 value={draft.title}
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                onChange={(event) => {
+                  setDraft({ ...draft, title: event.target.value });
+                  setFieldErrors({});
+                }}
               />
             </Grid>
             <Grid size={12}>
@@ -182,8 +192,14 @@ export default function IncidentsPage() {
                 required
                 multiline
                 minRows={3}
+                disabled={saving}
+                error={Boolean(fieldErrors.description)}
+                helperText={fieldErrors.description ?? ' '}
                 value={draft.description}
-                onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                onChange={(event) => {
+                  setDraft({ ...draft, description: event.target.value });
+                  setFieldErrors({});
+                }}
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>

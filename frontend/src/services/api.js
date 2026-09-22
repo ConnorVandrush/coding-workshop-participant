@@ -42,6 +42,27 @@ export class ApiError extends Error {
   }
 
   /**
+   * Map the validation details onto the fields they refer to.
+   *
+   * The API reports failures as `{"field": "body.email", "message": "..."}`,
+   * where the `body.` prefix names the request part rather than anything the
+   * user sees. Stripping it gives a key a form can match against its own
+   * fields, so the message can be shown beside the input that caused it
+   * instead of only in a toast.
+   *
+   * @returns {Object<string, string>} Field name to message; empty when the
+   *   error is not a field-level validation failure.
+   */
+  fieldErrors() {
+    if (!Array.isArray(this.details)) return {};
+    return this.details.reduce((acc, detail) => {
+      const field = String(detail.field ?? '').replace(/^body\./, '');
+      if (field && !acc[field]) acc[field] = detail.message;
+      return acc;
+    }, {});
+  }
+
+  /**
    * Flatten field-level validation details into a readable string.
    *
    * @returns {string} One line per failing field, or the plain message.

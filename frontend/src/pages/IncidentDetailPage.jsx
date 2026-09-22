@@ -52,6 +52,7 @@ import {
   selectNotes,
 } from '../store/incidentsSlice';
 import { notify } from '../store/uiSlice';
+import { errorMessage } from '../store/thunkUtils';
 import { STATUS_META, formatDateTime, humanise } from '../theme';
 
 /**
@@ -120,7 +121,7 @@ export default function IncidentDetailPage() {
     const ok = result.meta.requestStatus === 'fulfilled';
     dispatch(
       notify({
-        message: ok ? successMessage : (result.payload ?? 'The request failed'),
+        message: ok ? successMessage : errorMessage(result.payload, 'The request failed'),
         severity: ok ? 'success' : 'error',
       }),
     );

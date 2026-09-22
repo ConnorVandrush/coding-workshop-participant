@@ -9,6 +9,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request, toQuery } from '../services/api';
+import { errorMessage, rejectValue } from './thunkUtils';
 
 /** Filter values meaning "show everything". */
 export const DEFAULT_FILTERS = {
@@ -37,7 +38,7 @@ async function withToken(body, { getState, rejectWithValue }) {
   try {
     return await body(getState().auth.token);
   } catch (error) {
-    return rejectWithValue(error.describe());
+    return rejectWithValue(rejectValue(error));
   }
 }
 
@@ -157,7 +158,7 @@ const incidentsSlice = createSlice({
       })
       .addCase(fetchIncidents.rejected, (state, action) => {
         state.listStatus = 'failed';
-        state.listError = action.payload ?? 'Could not load incidents';
+        state.listError = errorMessage(action.payload, 'Could not load incidents');
       })
       .addCase(fetchIncident.pending, (state) => {
         state.currentStatus = 'loading';

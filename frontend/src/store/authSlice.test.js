@@ -43,18 +43,21 @@ describe('sign in', () => {
   });
 
   it('records a failure message without clearing an existing session', () => {
-    const state = reducer(initial(), { type: login.rejected.type, payload: 'Email or password is incorrect' });
+    const state = reducer(initial(), {
+      type: login.rejected.type,
+      payload: { message: 'Email or password is incorrect', fields: {} },
+    });
     expect(state.status).toBe('failed');
     expect(state.error).toBe('Email or password is incorrect');
   });
 
   it('clears the pending error when the user edits the form', () => {
-    const failed = reducer(initial(), { type: login.rejected.type, payload: 'nope' });
+    const failed = reducer(initial(), { type: login.rejected.type, payload: { message: 'nope' } });
     expect(reducer(failed, clearAuthError()).error).toBeNull();
   });
 
   it('drops any stale error when a new attempt starts', () => {
-    const failed = reducer(initial(), { type: login.rejected.type, payload: 'nope' });
+    const failed = reducer(initial(), { type: login.rejected.type, payload: { message: 'nope' } });
     const pending = reducer(failed, { type: login.pending.type });
     expect(pending.status).toBe('loading');
     expect(pending.error).toBeNull();
