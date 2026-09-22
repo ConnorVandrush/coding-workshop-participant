@@ -122,6 +122,17 @@ jobs:
         if: steps.guard.outputs.ready == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq jq dnsutils
 
+      # The Terraform Lambda module shells out to an interpreter whose version
+      # matches the function runtime when it builds the package, and fails the
+      # plan with "Python interpreter version equal to defined lambda runtime
+      # (python3.13) should be available in system PATH" otherwise. It must also
+      # match so the vendored wheels target the right CPython ABI.
+      - name: Install Python matching the Lambda runtime
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install Terraform
         if: steps.guard.outputs.ready == 'true'
         uses: hashicorp/setup-terraform@v3

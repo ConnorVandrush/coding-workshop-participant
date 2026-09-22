@@ -124,6 +124,29 @@ jobs:
           terraform_version: '1.11.0'
           terraform_wrapper: false
 
+      # deploy-frontend.sh reads the bucket and API URL from `terraform output`
+      # but never runs `terraform init`, so on a fresh runner there is no
+      # backend configured, every output resolves empty, and the script aborts
+      # with "Could not get S3 bucket name from Terraform outputs". Minting
+      # credentials and initialising the backend first makes the outputs
+      # readable.
+      - name: Initialise Terraform state
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PARTICIPANT_ID: ${{ secrets.PARTICIPANT_ID }}
+          PARTICIPANT_CODE: ${{ secrets.PARTICIPANT_CODE }}
+          EVENT_ID: ${{ secrets.EVENT_ID }}
+          PARTICIPANT_URL: ${{ secrets.PARTICIPANT_URL }}
+          AWS_REGION: us-east-2
+        run: |
+          ./bin/setup-participant.sh
+          set -a && . ./ENVIRONMENT.config && set +a
+          cd infra
+          terraform init -reconfigure \
+            -backend-config="bucket=coding-workshop-tfstate-${PARTICIPANT_ID}" \
+            -backend-config="region=${AWS_REGION}"
+          echo "Bucket: $(terraform output -raw s3_bucket_name)"
+
       - name: Deploy frontend
         if: steps.guard.outputs.ready == 'true'
         env:
