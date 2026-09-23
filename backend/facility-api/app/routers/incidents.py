@@ -25,9 +25,11 @@ from app.domain import (
     TRANSITIONS,
     can_transition,
 )
+from app.duplicates import find_similar
 from app.errors import ApiError, not_found
 from app.notifications import enqueue
 from app.models import (
+    DuplicateCheck,
     IncidentAssign,
     IncidentCreate,
     IncidentEscalation,
@@ -37,6 +39,7 @@ from app.models import (
     IncidentUpdate,
     NoteCreate,
     NoteResponse,
+    SimilarIncidents,
 )
 from app.security import engineer_profile_id, get_current_user, is_admin
 
@@ -370,6 +373,58 @@ async def create_incident(payload: IncidentCreate, user: dict[str, Any] = _ANY_U
         ),
     )
     return _serialise(_load_incident(int((created or {})["id"]), user))
+
+
+# POST /incidents/duplicate-check
+# Ask whether a problem has already been reported, before reporting it again.
+# Request:  header `Authorization: Bearer <token>`
+#   {"title": "Projecter wont turn on in 3A",      // required
+#    "description": "nothing happens",              // optional, improves recall
+#    "category": "AV_EQUIPMENT",                    // optional, weighs heavily
+#    "building_id": 1, "floor_id": 10, "seat_id": 99}  // optional
+# Response 200:
+#   {"matches": [
+#      {"id": 42, "title": "Projector will not power on in Meeting Room 3A",
+#       "category": "AV_EQUIPMENT", "priority": "HIGH", "status": "IN_PROGRESS",
+#       "location": {"building_id": 1, "building_name": "HQ North",
+#                    "floor_id": 10, "floor_level": 3,
+#                    "seat_id": null, "seat_code": null},
+#       "created_at": "2026-09-21T09:12:00Z",
+#       "score": 0.76, "reasons": ["wording is very similar", "same category",
+#                                  "same floor"],
+#       "visible": true}]}
+# An empty list means nothing similar is open; it is not an error.
+@router.post("/duplicate-check", response_model=SimilarIncidents, summary="Find existing reports of the same problem")
+async def duplicate_check(payload: DuplicateCheck, user: dict[str, Any] = _ANY_USER) -> dict[str, Any]:
+    """
+    Look for open incidents that appear to describe the problem being reported.
+
+    Matches deliberately ignore the caller's visibility: the point of the
+    feature is to reveal that *somebody* has already reported the broken air
+    conditioner, which an employee restricted to their own incidents would
+    otherwise never learn. Each match instead carries ``visible``, saying
+    whether the caller may open the full record, and the match itself omits the
+    description and reporter so nothing beyond the existence of the incident is
+    disclosed.
+
+    Args:
+        payload: The draft incident's text and optional category and location.
+        user: The authenticated caller.
+
+    Returns:
+        dict: ``{"matches": [...]}`` ordered by descending score.
+    """
+    return {
+        "matches": find_similar(
+            title=payload.title,
+            description=payload.description or "",
+            category=payload.category.value if payload.category else None,
+            building_id=payload.building_id,
+            floor_id=payload.floor_id,
+            seat_id=payload.seat_id,
+            visibility=visibility_clause(user),
+        )
+    }
 
 
 # GET /incidents/{incident_id}
@@ -879,4 +934,44 @@ async def create_note(
             "full_name": user["full_name"],
             "email": user["email"],
         },
+    }
+
+
+# GET /incidents/{incident_id}/related
+# The same ranking as POST /incidents/duplicate-check, run against an incident
+# that already exists, so a triager can spot that three tickets are one fault.
+# Request:  header `Authorization: Bearer <token>`, no body.
+# Response 200: {"matches": [ <match object, see POST /incidents/duplicate-check> ]}
+# Response 404: not_found (missing, or not visible to this caller)
+@router.get("/{incident_id}/related", response_model=SimilarIncidents, summary="Find related incidents")
+async def related_incidents(incident_id: int, user: dict[str, Any] = _ANY_USER) -> dict[str, Any]:
+    """
+    List incidents that look like the same problem as this one.
+
+    The caller must be able to see the incident being asked about; the matches
+    themselves follow the same disclosure rules as ``duplicate-check``.
+
+    Args:
+        incident_id: The incident to match against.
+        user: The authenticated caller.
+
+    Returns:
+        dict: ``{"matches": [...]}`` ordered by descending score, excluding the
+        incident itself.
+
+    Raises:
+        ApiError: 404 when the incident is missing or not visible to the caller.
+    """
+    incident = _load_incident(incident_id, user)
+    return {
+        "matches": find_similar(
+            title=incident["title"],
+            description=incident["description"],
+            category=incident["category"],
+            building_id=incident["building_id"],
+            floor_id=incident["floor_id"],
+            seat_id=incident["seat_id"],
+            exclude_id=incident_id,
+            visibility=visibility_clause(user),
+        )
     }

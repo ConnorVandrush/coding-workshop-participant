@@ -26,6 +26,7 @@ import { useNavigate } from 'react-router-dom';
 import IncidentFilters from '../components/IncidentFilters';
 import LiveStatus from '../components/LiveStatus';
 import IncidentList from '../components/IncidentList';
+import SimilarIncidents from '../components/SimilarIncidents';
 import usePolling from '../hooks/usePolling';
 import {
   fetchBuildings,
@@ -35,9 +36,12 @@ import {
   selectFloors,
 } from '../store/facilitiesSlice';
 import {
+  checkDuplicates,
+  clearDuplicates,
   createIncident,
   fetchIncidents,
   resetFilters,
+  selectDuplicates,
   selectFilters,
   selectIncidents,
   setFilters,
@@ -46,6 +50,14 @@ import {
 import { notify } from '../store/uiSlice';
 import { errorFields, errorMessage } from '../store/thunkUtils';
 import { CATEGORIES, PRIORITY_META, humanise } from '../theme';
+
+// A title shorter than this is not worth searching on: it matches half the
+// table and the suggestions flicker as the reporter types the first word.
+const MIN_TITLE_FOR_LOOKUP = 8;
+
+// Long enough to let someone finish a word, short enough that the answer is
+// there by the time they look up from the keyboard.
+const LOOKUP_DEBOUNCE_MS = 400;
 
 const EMPTY_DRAFT = {
   title: '',
@@ -78,6 +90,7 @@ export default function IncidentsPage() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const seats = useSelector((state) => state.facilities.seatsByFloor[draft.floor_id] ?? []);
+  const duplicates = useSelector(selectDuplicates);
 
   useEffect(() => {
     dispatch(fetchBuildings());
@@ -89,6 +102,35 @@ export default function IncidentsPage() {
     const timer = setTimeout(() => dispatch(fetchIncidents()), 250);
     return () => clearTimeout(timer);
   }, [dispatch, filters, page]);
+
+  // Ask whether this has already been reported, as the reporter types.
+  //
+  // Debounced rather than fired per keystroke, and skipped entirely until the
+  // title is long enough to mean something. The dialog's open state is in the
+  // dependencies so closing it cancels a pending lookup.
+  useEffect(() => {
+    if (!dialogOpen || draft.title.trim().length < MIN_TITLE_FOR_LOOKUP) {
+      dispatch(clearDuplicates());
+      return undefined;
+    }
+    const payload = { title: draft.title.trim(), category: draft.category };
+    if (draft.description.trim()) payload.description = draft.description.trim();
+    if (draft.building_id) payload.building_id = Number(draft.building_id);
+    if (draft.floor_id) payload.floor_id = Number(draft.floor_id);
+    if (draft.seat_id) payload.seat_id = Number(draft.seat_id);
+
+    const timer = setTimeout(() => dispatch(checkDuplicates(payload)), LOOKUP_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [
+    dispatch,
+    dialogOpen,
+    draft.title,
+    draft.description,
+    draft.category,
+    draft.building_id,
+    draft.floor_id,
+    draft.seat_id,
+  ]);
 
   // Load the floors of whichever building the reporter picks in the dialog.
   useEffect(() => {
@@ -304,6 +346,9 @@ export default function IncidentsPage() {
               </TextField>
             </Grid>
           </Grid>
+          <Box sx={{ mt: 1 }}>
+            <SimilarIncidents matches={duplicates} variant="draft" />
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDialogOpen(false)}>Cancel</Button>

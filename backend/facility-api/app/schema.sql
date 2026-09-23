@@ -133,3 +133,27 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_
 CREATE INDEX IF NOT EXISTS idx_notification_events_pending
     ON notification_events (id) WHERE processed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id, revoked_at);
+
+-- Duplicate detection (see app/duplicates.py).
+--
+-- The full-text index is unconditional; the expression is IMMUTABLE because the
+-- 'english' configuration is a literal, which is what lets it be indexed at all.
+CREATE INDEX IF NOT EXISTS idx_incidents_fts
+    ON incidents USING GIN (to_tsvector('english', title || ' ' || description));
+
+-- pg_trgm buys typo tolerance, which full-text search cannot do: "projecter"
+-- stems to itself and matches nothing. It is wrapped because creating an
+-- extension needs rights this role may not have on every deployment, and an
+-- uncaught error here would abort the whole schema bootstrap on cold start -
+-- taking the service down over a ranking nicety. app/duplicates.py probes for
+-- the functions and falls back to full-text-only ranking when they are absent.
+DO $trgm$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE INDEX IF NOT EXISTS idx_incidents_title_trgm
+        ON incidents USING GIN ((title || ' ' || description) gin_trgm_ops);
+EXCEPTION
+    WHEN insufficient_privilege OR feature_not_supported THEN
+        RAISE NOTICE 'pg_trgm unavailable; duplicate detection falls back to full-text search';
+END
+$trgm$;

@@ -37,6 +37,7 @@ coding-workshop-participant/
 │   │   │   └── uiSlice.js         # toasts and the mobile drawer
 │   │   ├── components/
 │   │   │   ├── AppLayout.jsx      # responsive shell (sidebar / drawer)
+│   │   │   ├── SimilarIncidents.jsx # "is this already reported?" panel
 │   │   │   ├── ProtectedRoute.jsx # auth + role guard
 │   │   │   ├── IncidentFilters.jsx
 │   │   │   ├── IncidentList.jsx   # table on desktop, cards on phones
@@ -74,6 +75,34 @@ together. Three decisions worth knowing:
   the detail view and the matching row in the list without a re-fetch.
 * **Toasts are global.** Any thunk reports success or failure through
   `notify()`, so no page has to own a snackbar.
+
+## Telling the reporter it is already reported
+
+The report dialog asks the API whether the draft describes a problem someone
+has already filed, and shows what it finds above the buttons. The same panel
+appears on the detail page, listing incidents that look like the same fault.
+
+Three decisions shape it:
+
+* **It never blocks.** The reporter can always submit. A duplicate prompt
+  standing between somebody and reporting a real problem is worse than the
+  duplicates it prevents, so the panel is advice and the Report button stays
+  enabled.
+* **It explains itself.** Every match lists why it matched - "wording is very
+  similar, same category, same floor". A bare relevance score tells a reporter
+  nothing about whether to abandon what they are typing.
+* **It only links where a link works.** An employee sees that a colleague
+  already reported the fault but may not read that incident, so a match arrives
+  with `visible: false` and is rendered as plain text with a line saying why.
+  Linking anyway would hand them a 404.
+
+The lookup is debounced by 400ms and skipped until the title is at least eight
+characters, because a two-word title matches half the table and the suggestions
+flicker while the reporter is still typing the first word. Results are guarded
+by request id in the reducer: two lookups can be in flight, and the slow answer
+for an abandoned draft must not overwrite the fast answer for the current one.
+A failed lookup changes nothing on screen - it is a convenience, and the
+reporter should never find out it broke.
 
 ## Staying signed in
 
@@ -204,8 +233,8 @@ npm run test:watch # watch mode while developing
 npm run coverage   # v8 coverage report
 ```
 
-189 tests across the API client, the Redux slices, the components and every
-page (84% statement coverage). They concentrate on behaviour a production build cannot catch:
+266 tests across the API client, the Redux slices, the components and every
+page (86% statement coverage). They concentrate on behaviour a production build cannot catch:
 
 * `services/api.test.js` — empty filters are dropped from query strings (the
   API rejects `""` for enum parameters), the error envelope is unwrapped, a 204
@@ -213,6 +242,9 @@ page (84% statement coverage). They concentrate on behaviour a production build 
 * `store/*.test.js` — changing a filter returns to page one; a write refreshes
   both the detail view and the matching list row; a restored token that turns
   out to be expired is discarded rather than leaving a half-signed-in state.
+* `components/SimilarIncidents.test.jsx` — the duplicate panel renders nothing
+  when there is nothing to say, never links to a match the caller cannot open,
+  and treats a ground floor numbered zero as a floor rather than as missing.
 * `components/*.test.jsx` — the responsive table/card switch, the role guard
   waiting for the session check before judging a role, the chip vocabulary, the
   shell's per-role navigation and drawer behaviour, and the filter bar's flags
@@ -247,7 +279,7 @@ npm run e2e          # or npm run e2e:ui for the interactive runner
 E2E_BASE_URL=https://your-distribution.cloudfront.net npm run e2e
 ```
 
-13 Playwright tests over the journeys the workshop calls critical:
+21 Playwright tests over the journeys the workshop calls critical:
 
 * `e2e/auth.spec.js` — anonymous redirect, bad credentials, off-domain
   registration, and a session surviving a reload then ending on sign out.
@@ -256,6 +288,14 @@ E2E_BASE_URL=https://your-distribution.cloudfront.net npm run e2e
   the engineer progresses, blocks with a reason, unblocks and resolves, and the
   reporter closes. Plus the note thread, internal notes staying invisible to
   employees, and escalation that only an admin can clear.
+* `e2e/duplicates.spec.js` — the ranking itself, against real PostgreSQL rather
+  than a stub: a reworded, misspelled report is recognised as one already
+  filed; a genuinely different fault on the same equipment is not; the panel
+  never blocks a submission; and an employee is told a colleague reported it
+  without being shown the ticket or offered a link they cannot follow. The
+  phrasings are chosen from measured scores (~0.60 for the duplicate, ~0.48 for
+  the distinct fault, against a 0.55 threshold) so the margin is deliberate
+  rather than lucky.
 * `e2e/rbac.spec.js` — per-role scoping, and that `/users` is unreachable by URL
   for an employee rather than rendering a page that would only 403.
 * `e2e/responsive.spec.js` — on a Pixel 5 profile, the table becomes cards and

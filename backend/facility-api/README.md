@@ -169,11 +169,13 @@ restricted to `@acme.inc` addresses.
 | GET POST | `/engineers` | List engineers with workload / create a profile |
 | GET PUT DELETE | `/engineers/{id}` | Read / update / delete a profile |
 | GET POST | `/incidents` | Search+filter / report |
+| POST | `/incidents/duplicate-check` | Find existing reports of a draft's problem |
 | GET PUT DELETE | `/incidents/{id}` | Read / update / delete |
 | POST | `/incidents/{id}/assign` | Assign or unassign an engineer |
 | POST | `/incidents/{id}/status` | Drive the workflow |
 | POST | `/incidents/{id}/escalate` | Raise or clear an escalation |
 | GET POST | `/incidents/{id}/notes` | Read / add ticket notes |
+| GET | `/incidents/{id}/related` | Incidents that look like the same fault |
 | GET | `/dashboard/summary` | Counts by status, priority, category |
 | GET | `/dashboard/hotspots` | Buildings / floors / seats with recurring issues |
 | GET | `/dashboard/sla` | Acknowledge, assign, resolve and close timings |
@@ -255,6 +257,49 @@ without hard-coding the rules. Blocking requires a `reason` and resolving
 requires a `resolution`; both are appended to the ticket's notes, and the
 `acknowledged_at` / `assigned_at` / `resolved_at` / `closed_at` stamps feed
 `GET /dashboard/sla`.
+
+## Duplicate detection
+
+Twelve tickets for one broken air conditioner is a facility desk's worst
+failure mode: each is triaged, assigned and chased separately, and the
+dashboards report a crisis that is not happening. `POST
+/incidents/duplicate-check` answers "is this already reported?" while the
+reporter is still typing, and `GET /incidents/{id}/related` runs the same
+ranking against an incident that already exists.
+
+`app/duplicates.py` scores every open candidate on three signals:
+
+| Signal | Weight | Why it is there |
+| ------ | ------ | --------------- |
+| Text | 0.50 | `GREATEST(word_similarity, similarity)` from `pg_trgm`. People misspell ("projecter"), abbreviate ("AC") and re-word; full-text search stems a typo to itself and matches nothing. Taking the larger of the two metrics keeps the score stable whether the reporter has typed four words or forty. |
+| Category | 0.30 | What separates "AC leaking on level 2" from "Emergency exit light out on level 2". On text alone those two score *identically*, because they share "level 2". |
+| Location | 0.20 | Same seat (1.0) beats same floor (0.7) beats same building (0.4). |
+
+Candidates are gathered by a recall gate - a full-text match on any word, or
+enough trigram overlap to be worth scoring - then filtered at **0.55**. The
+weights and that threshold were fitted against a hand-labelled fixture of
+realistically worded reports in `tests/test_duplicates.py`, where true
+duplicates scored 0.66-0.80 and unrelated incidents 0.06-0.44. A prompt that
+fires on unrelated incidents is worse than no prompt at all, because people
+learn to dismiss it unread.
+
+Closed incidents are out of scope; resolved ones are not, since "the same fault
+came back" is worth surfacing.
+
+**Disclosure.** Matches ignore the caller's visibility, because the feature
+exists precisely to tell an employee that *somebody else* already reported the
+fault - which the normal scoping would never let them see. What a match
+discloses is therefore deliberately narrow: id, title, category, priority,
+status, location and age, with no description and no reporter. Each match
+carries `visible`, saying whether the caller may open the full record, so the
+UI can avoid offering a link that would 404.
+
+**`pg_trgm` is optional.** `schema.sql` creates the extension inside a `DO`
+block that swallows a privilege error, because an uncaught one there would
+abort the whole schema bootstrap on cold start and take the service down over a
+ranking nicety. The module probes for the functions once and falls back to
+full-text-only ranking when they are missing - fewer duplicates found, no
+errors.
 
 ## Sessions and token refresh
 
@@ -387,3 +432,11 @@ note visibility, engineer capacity limits and the dashboard aggregates.
 `tests/test_lambda_handler.py` invokes `function.handler` with real Lambda
 Function URL (payload format 2.0) events, covering the Mangum translation and
 the CloudFront prefix handling that the ASGI-level tests cannot reach.
+
+`tests/test_duplicates.py` is different in kind. Alongside the usual contract
+checks it carries a hand-labelled fixture of realistically worded reports —
+including a misspelling and a pair that share a floor and the phrase "level 2"
+while being unrelated faults — and asserts that every true duplicate outranks
+every distractor. Weights and thresholds cannot be tuned honestly without it.
+One test deliberately runs the same misspelled query with `pg_trgm` disabled to
+show that the trigram path, not something incidental, is what finds it.

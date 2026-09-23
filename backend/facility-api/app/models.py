@@ -356,6 +356,44 @@ class IncidentPage(ApiModel):
     offset: int
 
 
+class DuplicateCheck(ApiModel):
+    """Draft incident text to look for existing reports of the same problem."""
+
+    title: NonEmptyStr
+    description: Optional[Annotated[str, Field(max_length=8000)]] = None
+    category: Optional[IncidentCategory] = None
+    building_id: Optional[int] = None
+    floor_id: Optional[int] = None
+    seat_id: Optional[int] = None
+
+
+class SimilarIncident(ApiModel):
+    """
+    One candidate duplicate.
+
+    Narrower than :class:`IncidentResponse` on purpose - see
+    ``app/duplicates.py::_serialise_match`` for why the description and
+    reporter are withheld.
+    """
+
+    id: int
+    title: str
+    category: IncidentCategory
+    priority: IncidentPriority
+    status: IncidentStatus
+    location: IncidentLocation
+    created_at: datetime
+    score: float
+    reasons: list[str] = Field(default_factory=list)
+    visible: bool
+
+
+class SimilarIncidents(ApiModel):
+    """Ranked duplicate candidates, best first."""
+
+    matches: list[SimilarIncident]
+
+
 class NoteCreate(ApiModel):
     """
     A comment on an incident.

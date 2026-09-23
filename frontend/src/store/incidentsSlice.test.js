@@ -11,10 +11,13 @@ import reducer, {
   DEFAULT_FILTERS,
   assignIncident,
   changeStatus,
+  checkDuplicates,
   clearCurrent,
+  clearDuplicates,
   deleteIncident,
   escalateIncident,
   fetchIncidents,
+  fetchRelated,
   resetFilters,
   setFilters,
   setPage,
@@ -149,5 +152,100 @@ describe('clearCurrent', () => {
     expect(state.current).toBeNull();
     expect(state.notes).toEqual([]);
     expect(state.currentStatus).toBe('idle');
+  });
+});
+
+describe('duplicate suggestions', () => {
+  const match = (id) => ({
+    id,
+    title: `Match ${id}`,
+    category: 'HVAC',
+    priority: 'HIGH',
+    status: 'OPEN',
+    location: {},
+    created_at: '2026-09-21T09:12:00Z',
+    score: 0.7,
+    reasons: ['same category'],
+    visible: true,
+  });
+
+  /**
+   * Build the pending/fulfilled action pair for one lookup.
+   *
+   * @param {string} requestId The request identifier Redux Toolkit would generate.
+   * @param {Array} matches The matches that lookup resolves with.
+   * @returns {object} `{pending, fulfilled}` actions.
+   */
+  const lookup = (requestId, matches) => ({
+    pending: { type: checkDuplicates.pending.type, meta: { requestId } },
+    fulfilled: { type: checkDuplicates.fulfilled.type, meta: { requestId }, payload: { matches } },
+  });
+
+  it('stores the matches from a completed lookup', () => {
+    const first = lookup('a', [match(1)]);
+    let state = reducer(undefined, first.pending);
+    state = reducer(state, first.fulfilled);
+    expect(state.duplicates).toEqual([match(1)]);
+  });
+
+  it('ignores an answer for a draft the reporter has moved past', () => {
+    // The reporter types, pauses, types more. Two lookups are in flight and the
+    // first one comes back last. Without the request-id guard the panel would
+    // end up showing suggestions for text that is no longer in the box.
+    const stale = lookup('a', [match(1)]);
+    const fresh = lookup('b', [match(2)]);
+
+    let state = reducer(undefined, stale.pending);
+    state = reducer(state, fresh.pending);
+    state = reducer(state, fresh.fulfilled);
+    state = reducer(state, stale.fulfilled);
+
+    expect(state.duplicates).toEqual([match(2)]);
+  });
+
+  it('leaves the suggestions alone when a lookup fails', () => {
+    const first = lookup('a', [match(1)]);
+    let state = reducer(undefined, first.pending);
+    state = reducer(state, first.fulfilled);
+
+    state = reducer(state, { type: checkDuplicates.pending.type, meta: { requestId: 'b' } });
+    state = reducer(state, { type: checkDuplicates.rejected.type, meta: { requestId: 'b' }, payload: 'boom' });
+
+    expect(state.duplicates).toEqual([match(1)]);
+  });
+
+  it('drops the suggestions and any pending lookup on demand', () => {
+    const first = lookup('a', [match(1)]);
+    let state = reducer(undefined, first.pending);
+    state = reducer(state, first.fulfilled);
+    state = reducer(state, { type: checkDuplicates.pending.type, meta: { requestId: 'b' } });
+
+    state = reducer(state, clearDuplicates());
+    expect(state.duplicates).toEqual([]);
+
+    // An answer arriving after the dialog closed must not repopulate the panel.
+    state = reducer(state, { type: checkDuplicates.fulfilled.type, meta: { requestId: 'b' }, payload: { matches: [match(9)] } });
+    expect(state.duplicates).toEqual([]);
+  });
+
+  it('stores related incidents for the detail view', () => {
+    const state = reducer(undefined, {
+      type: fetchRelated.fulfilled.type,
+      payload: { matches: [match(5)] },
+    });
+    expect(state.related).toEqual([match(5)]);
+  });
+
+  it('clears related incidents when the detail view is torn down', () => {
+    let state = reducer(undefined, { type: fetchRelated.fulfilled.type, payload: { matches: [match(5)] } });
+    state = reducer(state, clearCurrent());
+    expect(state.related).toEqual([]);
+  });
+
+  it('empties the related list when its lookup fails', () => {
+    // Otherwise the previous incident's neighbours linger on the next one.
+    let state = reducer(undefined, { type: fetchRelated.fulfilled.type, payload: { matches: [match(5)] } });
+    state = reducer(state, { type: fetchRelated.rejected.type, payload: 'boom' });
+    expect(state.related).toEqual([]);
   });
 });

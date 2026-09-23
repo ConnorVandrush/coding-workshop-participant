@@ -35,6 +35,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
 import LiveStatus from '../components/LiveStatus';
+import SimilarIncidents from '../components/SimilarIncidents';
 import WorkflowDiagram from '../components/WorkflowDiagram';
 import usePolling from '../hooks/usePolling';
 import { EscalationChip, PriorityChip, StatusChip } from '../components/StatusChip';
@@ -50,8 +51,10 @@ import {
   escalateIncident,
   fetchIncident,
   fetchNotes,
+  fetchRelated,
   selectCurrentIncident,
   selectNotes,
+  selectRelated,
 } from '../store/incidentsSlice';
 import { notify } from '../store/uiSlice';
 import { errorMessage } from '../store/thunkUtils';
@@ -69,6 +72,7 @@ export default function IncidentDetailPage() {
 
   const incident = useSelector(selectCurrentIncident);
   const notes = useSelector(selectNotes);
+  const related = useSelector(selectRelated);
   const engineers = useSelector(selectEngineers);
   const workflow = useSelector(selectWorkflow);
   const user = useSelector(selectUser);
@@ -84,6 +88,7 @@ export default function IncidentDetailPage() {
   useEffect(() => {
     dispatch(fetchIncident(incidentId));
     dispatch(fetchNotes(incidentId));
+    dispatch(fetchRelated(incidentId));
     dispatch(fetchWorkflow());
     return () => {
       dispatch(clearCurrent());
@@ -296,6 +301,12 @@ export default function IncidentDetailPage() {
               ))}
             </Grid>
           </Paper>
+
+          {related.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              <SimilarIncidents matches={related} variant="detail" />
+            </Box>
+          )}
 
           <Box sx={{ mb: 2 }}>
             <WorkflowDiagram

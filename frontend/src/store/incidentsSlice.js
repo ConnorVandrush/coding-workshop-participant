@@ -102,6 +102,23 @@ export const addNote = createAsyncThunk('incidents/addNote', async ({ incidentId
     thunkApi,
   ));
 
+/**
+ * Ask whether a draft incident has already been reported.
+ *
+ * Fired as the reporter types, so it carries a `requestId` guard in the
+ * reducers: a slow answer for an old draft must not overwrite a fast answer for
+ * the current one.
+ *
+ * @param {object} draft The draft title, description, category and location.
+ * @returns {Promise<object>} `{matches: [...]}` from the API.
+ */
+export const checkDuplicates = createAsyncThunk('incidents/checkDuplicates', async (draft, thunkApi) =>
+  withToken((token) => request('/incidents/duplicate-check', { method: 'POST', body: draft, token }), thunkApi));
+
+/** Load the incidents that look like the same problem as an existing one. */
+export const fetchRelated = createAsyncThunk('incidents/fetchRelated', async (incidentId, thunkApi) =>
+  withToken((token) => request(`/incidents/${incidentId}/related`, { token }), thunkApi));
+
 const initialState = {
   items: [],
   total: 0,
@@ -114,6 +131,11 @@ const initialState = {
   currentStatus: 'idle',
   notes: [],
   saving: false,
+  // Possible duplicates of the draft in the report dialog, and of the incident
+  // open in the detail view. Kept apart because both can be on screen at once.
+  duplicates: [],
+  duplicatesRequestId: null,
+  related: [],
   // When each view last arrived, so the UI can say how fresh it is.
   listUpdatedAt: null,
   currentUpdatedAt: null,
@@ -142,6 +164,17 @@ const incidentsSlice = createSlice({
       state.current = null;
       state.notes = [];
       state.currentStatus = 'idle';
+      state.related = [];
+    },
+    /**
+     * Forget the duplicate suggestions for the report draft.
+     *
+     * Also clears the in-flight request id, so an answer that arrives after the
+     * dialog is closed is discarded rather than repopulating an empty form.
+     */
+    clearDuplicates(state) {
+      state.duplicates = [];
+      state.duplicatesRequestId = null;
     },
   },
   extraReducers: (builder) => {
@@ -171,6 +204,28 @@ const incidentsSlice = createSlice({
       .addCase(fetchIncident.rejected, (state) => {
         state.currentStatus = 'failed';
         state.current = null;
+      })
+      .addCase(checkDuplicates.pending, (state, action) => {
+        state.duplicatesRequestId = action.meta.requestId;
+      })
+      .addCase(checkDuplicates.fulfilled, (state, action) => {
+        // Ignore anything but the newest request. Without this a slow lookup
+        // for "proj" can land after the one for "projector broken in 3A" and
+        // show the reporter suggestions for text they have moved past.
+        if (state.duplicatesRequestId !== action.meta.requestId) return;
+        state.duplicates = action.payload.matches;
+        state.duplicatesRequestId = null;
+      })
+      .addCase(checkDuplicates.rejected, (state, action) => {
+        // A failed lookup is not worth interrupting a report for: the reporter
+        // keeps whatever was on screen and can still submit.
+        if (state.duplicatesRequestId === action.meta.requestId) state.duplicatesRequestId = null;
+      })
+      .addCase(fetchRelated.fulfilled, (state, action) => {
+        state.related = action.payload.matches;
+      })
+      .addCase(fetchRelated.rejected, (state) => {
+        state.related = [];
       })
       .addCase(fetchNotes.fulfilled, (state, action) => {
         state.notes = action.payload;
@@ -218,7 +273,7 @@ const incidentsSlice = createSlice({
   },
 });
 
-export const { setFilters, resetFilters, setPage, clearCurrent } = incidentsSlice.actions;
+export const { setFilters, resetFilters, setPage, clearCurrent, clearDuplicates } = incidentsSlice.actions;
 
 /** @returns {number|null} When the list last arrived. */
 export const selectListUpdatedAt = (state) => state.incidents.listUpdatedAt;
@@ -232,5 +287,9 @@ export const selectFilters = (state) => state.incidents.filters;
 export const selectCurrentIncident = (state) => state.incidents.current;
 /** @returns {Array} Notes for the incident in the detail view. */
 export const selectNotes = (state) => state.incidents.notes;
+/** @returns {Array} Possible duplicates of the draft being reported. */
+export const selectDuplicates = (state) => state.incidents.duplicates;
+/** @returns {Array} Incidents resembling the one in the detail view. */
+export const selectRelated = (state) => state.incidents.related;
 
 export default incidentsSlice.reducer;

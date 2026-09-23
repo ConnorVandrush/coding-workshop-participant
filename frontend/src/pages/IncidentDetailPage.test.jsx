@@ -64,6 +64,7 @@ const workflow = { statuses: [{ id: 'OPEN', label: 'Open', is_terminal: false }]
 const api = (overrides = {}) => mockApi({
   'GET /incidents/:id': incident(),
   'GET /incidents/:id/notes': notes,
+  'GET /incidents/:id/related': { matches: [] },
   'GET /engineers': engineers,
   'GET /workflow': workflow,
   ...overrides,
@@ -273,5 +274,57 @@ describe('assignment', () => {
     await userEvent.click(screen.getByLabelText('Assigned engineer'));
     const option = await screen.findByRole('option', { name: /at capacity/ });
     expect(option).toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('related incidents', () => {
+  const related = (overrides = {}) => ({
+    id: 77,
+    title: 'Air conditioning leaking over desks on level 2',
+    category: 'HVAC',
+    priority: 'CRITICAL',
+    status: 'OPEN',
+    location: { building_id: 1, building_name: 'HQ North', floor_id: 10, floor_level: 2, seat_id: null, seat_code: null },
+    created_at: '2026-09-20T08:00:00Z',
+    score: 0.81,
+    reasons: ['wording is very similar', 'same category', 'same floor'],
+    visible: true,
+    ...overrides,
+  });
+
+  it('shows incidents that look like the same fault', async () => {
+    api({ 'GET /incidents/:id/related': { matches: [related()] } });
+    renderDetail();
+    expect(await screen.findByTestId('similar-incidents')).toBeInTheDocument();
+    expect(screen.getByText(/#77 Air conditioning leaking/)).toBeInTheDocument();
+  });
+
+  it('presents them as information rather than a warning', async () => {
+    // Nothing is being drafted here, so there is no "you may not need to
+    // report this" advice to give - that copy belongs to the report dialog.
+    api({ 'GET /incidents/:id/related': { matches: [related()] } });
+    renderDetail();
+    await screen.findByTestId('similar-incidents');
+    expect(screen.queryByText(/This may already be reported/)).not.toBeInTheDocument();
+  });
+
+  it('shows nothing when the incident stands alone', async () => {
+    api();
+    renderDetail();
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByTestId('similar-incidents')).not.toBeInTheDocument();
+  });
+
+  it('stays quiet when the lookup fails', async () => {
+    api({
+      'GET /incidents/:id/related': {
+        status: 503,
+        body: { error: { status: 503, type: 'database_unavailable', message: 'nope', details: null } },
+      },
+    });
+    renderDetail();
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByTestId('similar-incidents')).not.toBeInTheDocument();
+    expect(screen.queryByText(/nope/)).not.toBeInTheDocument();
   });
 });
