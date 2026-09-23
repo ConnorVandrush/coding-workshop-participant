@@ -6,7 +6,7 @@
 //
 //   npx -p @dbml/cli db2dbml postgres \
 //     'postgresql://USER:PASSWORD@HOST:5432/DBNAME?schemas=public' \
-//     -o backend/facility-api/schema.dbml
+//     -o docs/schema.dbml
 //
 // app/schema.sql stays the source of truth; regenerate this file after
 // changing it. Paste the contents into https://dbdiagram.io to draw the ERD.

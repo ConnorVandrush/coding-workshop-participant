@@ -54,13 +54,13 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
             db = container "Facility Database" "Users and roles, the building/floor/seat estate, engineer profiles, incidents and their notes, notifications, the event outbox and refresh-token digests." "Amazon Aurora Serverless v2, PostgreSQL 17.7" "Database" {
                 # The entity-relationship model, one level below this box. The
                 # element is clickable in Structurizr renderers; the same
-                # diagram is in the repository as backend/facility-api/schema.dbml,
-                # which is what the ERD was generated from.
+                # diagram is in the repository as docs/schema.dbml, which is
+                # what the ERD was generated from.
                 url "https://dbdiagram.io/d/6ab3e98d586942561273de1c"
                 properties {
                     "ERD" "https://dbdiagram.io/d/6ab3e98d586942561273de1c"
                     "Schema" "backend/facility-api/app/schema.sql"
-                    "DBML" "backend/facility-api/schema.dbml"
+                    "DBML" "docs/schema.dbml"
                 }
             }
         }
