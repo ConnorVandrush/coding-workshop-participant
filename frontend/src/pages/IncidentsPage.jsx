@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
@@ -47,6 +48,8 @@ import {
   setFilters,
   setPage,
 } from '../store/incidentsSlice';
+import { selectUser } from '../store/authSlice';
+import { fetchAssets, selectAssets } from '../store/maintenanceSlice';
 import { notify } from '../store/uiSlice';
 import { errorFields, errorMessage } from '../store/thunkUtils';
 import { CATEGORIES, PRIORITY_META, humanise } from '../theme';
@@ -67,6 +70,7 @@ const EMPTY_DRAFT = {
   building_id: '',
   floor_id: '',
   seat_id: '',
+  asset_id: '',
 };
 
 /**
@@ -77,6 +81,7 @@ const EMPTY_DRAFT = {
 export default function IncidentsPage() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const user = useSelector(selectUser);
   const incidents = useSelector(selectIncidents);
   const filters = useSelector(selectFilters);
   const buildings = useSelector(selectBuildings);
@@ -91,6 +96,16 @@ export default function IncidentsPage() {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const seats = useSelector((state) => state.facilities.seatsByFloor[draft.floor_id] ?? []);
   const duplicates = useSelector(selectDuplicates);
+  const assets = useSelector(selectAssets);
+
+  // What the list is scoped to. An engineer meeting a row they are not
+  // assigned to has nothing else on screen explaining why it is there.
+  const scopeNote =
+    user?.role === 'engineer'
+      ? 'yours, plus other faults on equipment you are working on'
+      : user?.role === 'employee'
+        ? 'the ones you reported'
+        : '';
 
   useEffect(() => {
     dispatch(fetchBuildings());
@@ -137,6 +152,21 @@ export default function IncidentsPage() {
     if (draft.building_id) dispatch(fetchFloors(draft.building_id));
   }, [dispatch, draft.building_id]);
 
+  // Offer the equipment at the location chosen so far, narrowing as the
+  // reporter narrows. Asking "which unit?" against the whole estate would be a
+  // list nobody reads; against one desk it is usually one or two things.
+  useEffect(() => {
+    if (!dialogOpen) return;
+    dispatch(
+      fetchAssets({
+        building_id: draft.building_id || undefined,
+        floor_id: draft.floor_id || undefined,
+        seat_id: draft.seat_id || undefined,
+        limit: 100,
+      }),
+    );
+  }, [dispatch, dialogOpen, draft.building_id, draft.floor_id, draft.seat_id]);
+
   // ...and the seats of the chosen floor, so the reporter can pinpoint a desk.
   useEffect(() => {
     if (draft.floor_id) dispatch(fetchSeats(draft.floor_id));
@@ -153,6 +183,7 @@ export default function IncidentsPage() {
     if (draft.building_id) payload.building_id = Number(draft.building_id);
     if (draft.floor_id) payload.floor_id = Number(draft.floor_id);
     if (draft.seat_id) payload.seat_id = Number(draft.seat_id);
+    if (draft.asset_id) payload.asset_id = Number(draft.asset_id);
 
     const result = await dispatch(createIncident(payload));
     setFieldErrors(result.meta.requestStatus === 'fulfilled' ? {} : errorFields(result.payload));
@@ -186,6 +217,7 @@ export default function IncidentsPage() {
           <Typography variant="h1">Incidents</Typography>
           <Typography variant="body2" color="text.secondary">
             {total} matching {total === 1 ? 'incident' : 'incidents'}
+            {scopeNote ? ` · ${scopeNote}` : ''}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -207,6 +239,21 @@ export default function IncidentsPage() {
         onChange={(update) => dispatch(setFilters(update))}
         onReset={() => dispatch(resetFilters())}
       />
+
+      {/* The filter bar has no control for equipment - the maintenance screen
+          sets it on the way in. Without this the reader would be looking at a
+          short list with nothing on screen explaining why. */}
+      {filters.asset_id ? (
+        <Chip
+          sx={{ mb: 2 }}
+          color="primary"
+          variant="outlined"
+          onDelete={() => dispatch(setFilters({ asset_id: '' }))}
+          label={`Showing failures of ${
+            incidents.find((incident) => incident.asset)?.asset?.code ?? 'one unit'
+          }`}
+        />
+      ) : null}
 
       {listStatus === 'loading' ? <LinearProgress aria-label="Loading incidents" sx={{ mb: 2 }} /> : null}
       {listError ? <Alert severity="error" sx={{ mb: 2 }}>{listError}</Alert> : null}
@@ -297,7 +344,13 @@ export default function IncidentsPage() {
                 fullWidth
                 value={draft.building_id}
                 onChange={(event) =>
-                  setDraft({ ...draft, building_id: event.target.value, floor_id: '', seat_id: '' })
+                  setDraft({
+                    ...draft,
+                    building_id: event.target.value,
+                    floor_id: '',
+                    seat_id: '',
+                    asset_id: '',
+                  })
                 }
               >
                 <MenuItem value="">Not specified</MenuItem>
@@ -315,7 +368,9 @@ export default function IncidentsPage() {
                 fullWidth
                 disabled={!draft.building_id}
                 value={draft.floor_id}
-                onChange={(event) => setDraft({ ...draft, floor_id: event.target.value, seat_id: '' })}
+                onChange={(event) =>
+                  setDraft({ ...draft, floor_id: event.target.value, seat_id: '', asset_id: '' })
+                }
               >
                 <MenuItem value="">Not specified</MenuItem>
                 {floors.map((floor) => (
@@ -333,7 +388,7 @@ export default function IncidentsPage() {
                 fullWidth
                 disabled={!draft.floor_id}
                 value={draft.seat_id}
-                onChange={(event) => setDraft({ ...draft, seat_id: event.target.value })}
+                onChange={(event) => setDraft({ ...draft, seat_id: event.target.value, asset_id: '' })}
                 helperText={draft.floor_id ? 'Optional, but it makes hotspots more precise' : ' '}
               >
                 <MenuItem value="">Not specified</MenuItem>
@@ -341,6 +396,35 @@ export default function IncidentsPage() {
                   <MenuItem key={seat.id} value={seat.id}>
                     {seat.code}
                     {seat.description ? ` — ${seat.description}` : ''}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Grid>
+            {/* Always offered, never hidden. Hiding it when the chosen
+                location happened to have nothing registered made the field
+                look as though it did not exist, and an attribution nobody can
+                see is an attribution nobody makes. The list narrows as the
+                location narrows; the helper text says which case you are in. */}
+            <Grid size={{ xs: 12 }}>
+              <TextField
+                select
+                label="Equipment"
+                fullWidth
+                value={draft.asset_id}
+                onChange={(event) => setDraft({ ...draft, asset_id: event.target.value })}
+                disabled={assets.length === 0}
+                helperText={
+                  assets.length === 0
+                    ? 'No equipment registered at this location yet'
+                    : draft.building_id
+                      ? 'Which unit failed, if the fault is with a specific one'
+                      : 'Choose a location above to narrow this list'
+                }
+              >
+                <MenuItem value="">Not equipment, or not sure</MenuItem>
+                {assets.map((asset) => (
+                  <MenuItem key={asset.id} value={asset.id}>
+                    {asset.code} — {asset.name}
                   </MenuItem>
                 ))}
               </TextField>

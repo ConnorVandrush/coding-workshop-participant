@@ -48,6 +48,7 @@ import { fetchWorkflow, selectWorkflow } from '../store/dashboardSlice';
 import {
   addNote,
   assignIncident,
+  updateIncident,
   changeStatus,
   clearCurrent,
   deleteIncident,
@@ -59,6 +60,7 @@ import {
   selectNotes,
   selectRelated,
 } from '../store/incidentsSlice';
+import { fetchAssets, selectAssets } from '../store/maintenanceSlice';
 import { notify } from '../store/uiSlice';
 import { errorMessage } from '../store/thunkUtils';
 import { STATUS_META, formatDateTime, humanise } from '../theme';
@@ -130,6 +132,7 @@ export default function IncidentDetailPage() {
   }, [dispatch, incidentId]);
   usePolling(refresh, { enabled: !saving });
 
+  const assets = useSelector(selectAssets);
   const isAdmin = user?.role === 'facility_admin';
   const isEngineer = user?.role === 'engineer';
   const isReporter = incident?.reporter?.id === user?.id;
@@ -151,6 +154,17 @@ export default function IncidentDetailPage() {
     if (isAdmin) dispatch(fetchEngineers());
   }, [dispatch, isAdmin]);
 
+  // Equipment at the incident's location, so a fault filed without a unit can
+  // still be attributed later. Most incidents are triaged after the fact, and
+  // an attribution that can only happen at report time never happens.
+  const buildingId = incident?.location?.building_id;
+  const floorId = incident?.location?.floor_id;
+  useEffect(() => {
+    if (buildingId || floorId) {
+      dispatch(fetchAssets({ building_id: buildingId || undefined, floor_id: floorId || undefined, limit: 100 }));
+    }
+  }, [dispatch, buildingId, floorId]);
+
   if (currentStatus === 'loading' && !incident) return <LinearProgress aria-label="Loading the incident" sx={{ mt: 2 }} />;
   if (currentStatus === 'failed') {
     return (
@@ -164,6 +178,10 @@ export default function IncidentDetailPage() {
   // Assignment is a facility admin's call alone: engineers do not pick up
   // their own work, so that one owner keeps control of how load is spread.
   const canAssign = isAdmin;
+  const canSetEquipment =
+    isAdmin
+    || (isEngineer && incident.assignee?.user_id === user?.id)
+    || (isReporter && incident.status === 'OPEN');
   const canDriveWorkflow =
     isAdmin || (isEngineer && incident.assignee?.user_id === user?.id) || isReporter;
 
@@ -233,6 +251,21 @@ export default function IncidentDetailPage() {
     if (report(result, engineerId === '' ? 'Incident unassigned' : 'Incident assigned')) {
       dispatch(fetchNotes(incidentId));
     }
+  };
+
+  /**
+   * Attach the incident to a unit of equipment, or detach it.
+   *
+   * @param {number|string} assetId Asset id, or '' to detach.
+   */
+  const submitEquipment = async (assetId) => {
+    const result = await dispatch(
+      updateIncident({
+        incidentId,
+        payload: { asset_id: assetId === '' ? null : Number(assetId) },
+      }),
+    );
+    report(result, assetId === '' ? 'Equipment cleared' : 'Equipment recorded');
   };
 
   /** Raise an escalation with a reason. */
@@ -348,6 +381,10 @@ export default function IncidentDetailPage() {
                         .filter(Boolean)
                         .join(' · ')
                     : 'Not specified',
+                ],
+                [
+                  'Equipment',
+                  incident.asset ? `${incident.asset.code} — ${incident.asset.name}` : 'Not specified',
                 ],
                 ['Reported', formatDateTime(incident.created_at)],
                 ['Acknowledged', formatDateTime(incident.acknowledged_at)],
@@ -475,6 +512,30 @@ export default function IncidentDetailPage() {
                   <AssignmentGroup>Other engineers</AssignmentGroup>
                 ) : null}
                 {others.map((engineer) => engineerOption(engineer, false))}
+              </TextField>
+            </Paper>
+          ) : null}
+
+          {canSetEquipment ? (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h3" gutterBottom>
+                Equipment
+              </Typography>
+              <TextField
+                select
+                fullWidth
+                label="Failed unit"
+                value={incident.asset?.id ?? ''}
+                onChange={(event) => submitEquipment(event.target.value)}
+                disabled={saving}
+                helperText="Attributing the fault to a unit is what makes it count towards replacement"
+              >
+                <MenuItem value="">Not equipment, or not sure</MenuItem>
+                {assets.map((asset) => (
+                  <MenuItem key={asset.id} value={asset.id}>
+                    {asset.code} — {asset.name}
+                  </MenuItem>
+                ))}
               </TextField>
             </Paper>
           ) : null}

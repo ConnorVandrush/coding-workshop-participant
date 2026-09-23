@@ -66,7 +66,21 @@ describe('desktop', () => {
   it('falls back to an em dash for an unassigned incident', () => {
     setViewport(true);
     render(<IncidentList incidents={[incidents[1]]} onSelect={() => {}} />);
-    expect(screen.getByText('—')).toBeInTheDocument();
+    // Two columns can be empty on this row - the assignee and the equipment -
+    // so the count is asserted rather than a single match.
+    expect(screen.getAllByText('—')).toHaveLength(2);
+  });
+
+  it('names the unit an incident was filed against', () => {
+    setViewport(true);
+    const withAsset = {
+      ...incidents[0],
+      asset: { id: 4, code: 'AV-3A-PROJ-01', name: 'Ceiling projector', asset_type: 'PROJECTOR' },
+    };
+    render(<IncidentList incidents={[withAsset]} onSelect={() => {}} />);
+    const tag = screen.getByText('AV-3A-PROJ-01');
+    // The tag is shown; the full name stays reachable on hover.
+    expect(tag).toHaveAttribute('title', 'Ceiling projector');
   });
 
   it('calls onSelect with the incident id when a row is clicked', async () => {

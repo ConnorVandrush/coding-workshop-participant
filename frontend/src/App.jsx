@@ -13,10 +13,12 @@ import AppLayout from './components/AppLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import DashboardPage from './pages/DashboardPage';
 import EngineersPage from './pages/EngineersPage';
+import EquipmentPage from './pages/EquipmentPage';
 import FacilitiesPage from './pages/FacilitiesPage';
 import IncidentDetailPage from './pages/IncidentDetailPage';
 import IncidentsPage from './pages/IncidentsPage';
 import LoginPage from './pages/LoginPage';
+import MaintenancePage from './pages/MaintenancePage';
 import UsersPage from './pages/UsersPage';
 import { loadSession, selectToken } from './store/authSlice';
 
@@ -49,6 +51,22 @@ export default function App() {
                 <Route path="/incidents/:incidentId" element={<IncidentDetailPage />} />
                 <Route path="/facilities" element={<FacilitiesPage />} />
                 <Route path="/engineers" element={<EngineersPage />} />
+                <Route
+                  path="/equipment"
+                  element={
+                    <ProtectedRoute roles={['facility_admin', 'engineer']}>
+                      <EquipmentPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/maintenance"
+                  element={
+                    <ProtectedRoute roles={['facility_admin', 'engineer']}>
+                      <MaintenancePage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/users"
                   element={

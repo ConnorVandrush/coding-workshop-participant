@@ -22,6 +22,7 @@ falling back to the local dev proxy on http://localhost:3001.
 """
 
 import argparse
+import datetime
 import json
 import subprocess  # nosec B404 # used only to read local `terraform output`
 import sys
@@ -64,6 +65,79 @@ BUILDINGS: list[dict[str, Any]] = [
             {"level": 1, "name": "Lab Floor", "seats": ["P1-03", "P1-04", "P1-09"]},
         ],
     },
+]
+
+# Equipment, one row per physical unit. Ages are expressed as months before the
+# seeding run so that the maintenance figures stay meaningful however long after
+# this script was written the database is built.
+#
+# The estate is deliberately uneven: the Meeting Room 3A projector is elderly
+# and fails repeatedly, while its two siblings are healthy. That is what gives
+# the maintenance screen something true to say - a unit flagged against the
+# median of its own type, rather than against a number picked out of the air.
+ASSETS: list[dict[str, Any]] = [
+    {"code": "AV-3A-PROJ-01", "name": "Ceiling projector, Meeting Room 3A", "type": "PROJECTOR",
+     "manufacturer": "Epson", "model": "EB-L200", "building": "HQ North", "floor": 3, "seat": "3A-12",
+     "installed_months_ago": 74, "expected_life_months": 60, "service_interval_months": 12, "last_serviced_months_ago": 20},
+    {"code": "AV-R1-PROJ-02", "name": "Briefing centre projector", "type": "PROJECTOR",
+     "manufacturer": "Epson", "model": "EB-L520", "building": "Riverside Annex", "floor": 1, "seat": "R1-05",
+     "installed_months_ago": 22, "expected_life_months": 60, "service_interval_months": 12, "last_serviced_months_ago": 4},
+    {"code": "AV-4A-PROJ-03", "name": "Executive boardroom projector", "type": "PROJECTOR",
+     "manufacturer": "Sony", "model": "VPL-FHZ70", "building": "HQ North", "floor": 4, "seat": "4A-01",
+     "installed_months_ago": 14, "expected_life_months": 60, "service_interval_months": 12, "last_serviced_months_ago": 2},
+    {"code": "AV-R1-MIC-01", "name": "Lapel microphone, briefing centre", "type": "MICROPHONE",
+     "manufacturer": "Shure", "model": "BLX14", "building": "Riverside Annex", "floor": 1, "seat": "R1-06",
+     "installed_months_ago": 26, "expected_life_months": 48},
+    {"code": "HVAC-HQ2-AHU-04", "name": "Air handling unit, Level 2", "type": "HVAC_UNIT",
+     "manufacturer": "Daikin", "model": "AHU-4000", "building": "HQ North", "floor": 2, "seat": "2A-11",
+     "installed_months_ago": 108, "expected_life_months": 180, "service_interval_months": 6, "last_serviced_months_ago": 9},
+    {"code": "HVAC-TP-CRAC-01", "name": "CRAC unit, data centre", "type": "HVAC_UNIT",
+     "manufacturer": "Vertiv", "model": "Liebert PDX", "building": "Tech Pavilion", "floor": -1,
+     "seat": "B1-RACK-07", "installed_months_ago": 96, "expected_life_months": 144, "service_interval_months": 3, "last_serviced_months_ago": 5},
+    {"code": "HQ-1B-TAP-02", "name": "Cafeteria mixer tap", "type": "PLUMBING_FIXTURE",
+     "manufacturer": "Grohe", "model": "Eurosmart", "building": "HQ North", "floor": 1, "seat": "1B-07",
+     "installed_months_ago": 40, "expected_life_months": 120},
+    {"code": "HQ-1A-DW-01", "name": "Cafeteria dishwasher", "type": "KITCHEN_APPLIANCE",
+     "manufacturer": "Winterhalter", "model": "UC-M", "building": "HQ North", "floor": 1, "seat": "1A-02",
+     "installed_months_ago": 84, "expected_life_months": 120, "service_interval_months": 12, "last_serviced_months_ago": 13},
+    {"code": "HQ-2A12-DOCK-07", "name": "Laptop docking station, 2A-12", "type": "DOCKING_STATION",
+     "manufacturer": "Dell", "model": "WD19TB", "building": "HQ North", "floor": 2, "seat": "2A-12",
+     "installed_months_ago": 30, "expected_life_months": 48},
+    {"code": "HQ-2C-EXIT-01", "name": "Emergency exit sign, Level 2 stairwell", "type": "EMERGENCY_LIGHT",
+     "manufacturer": "Eaton", "model": "CrompX", "building": "HQ North", "floor": 2, "seat": "2C-30",
+     "installed_months_ago": 92, "expected_life_months": 84, "service_interval_months": 12, "last_serviced_months_ago": 12},
+    {"code": "HQ-3B21-DESK-01", "name": "Sit-stand desk, 3B-21", "type": "STANDING_DESK",
+     "manufacturer": "Linak", "model": "DL11", "building": "HQ North", "floor": 3, "seat": "3B-21",
+     "installed_months_ago": 52, "expected_life_months": 120},
+    {"code": "RA-R2-PRT-14", "name": "Shared workspace printer", "type": "PRINTER",
+     "manufacturer": "Ricoh", "model": "IM C3000", "building": "Riverside Annex", "floor": 2, "seat": "R2-14",
+     "installed_months_ago": 66, "expected_life_months": 60, "service_interval_months": 6, "last_serviced_months_ago": 2},
+    {"code": "RA-R1-BADGE-01", "name": "Badge reader, Annex main door", "type": "BADGE_READER",
+     "manufacturer": "HID", "model": "Signo 20", "building": "Riverside Annex", "floor": 1, "seat": "R1-05",
+     "installed_months_ago": 48, "expected_life_months": 96, "service_interval_months": 12, "last_serviced_months_ago": 6},
+    {"code": "TP-B1-SW-07", "name": "Access switch, rack 7", "type": "NETWORK_SWITCH",
+     "manufacturer": "Cisco", "model": "C9300-48P", "building": "Tech Pavilion", "floor": -1,
+     "seat": "B1-RACK-07", "installed_months_ago": 34, "expected_life_months": 84, "service_interval_months": 24, "last_serviced_months_ago": 10},
+    {"code": "TP-P1-AP-09", "name": "Wireless access point, Lab Floor south", "type": "ACCESS_POINT",
+     "manufacturer": "Aruba", "model": "AP-515", "building": "Tech Pavilion", "floor": 1, "seat": "P1-09",
+     "installed_months_ago": 64, "expected_life_months": 60, "service_interval_months": 24, "last_serviced_months_ago": 8},
+    {"code": "TP-P1-PWR-04", "name": "Lab bench power distribution, P1-04", "type": "POWER_STRIP",
+     "manufacturer": "APC", "model": "AP9571A", "building": "Tech Pavilion", "floor": 1, "seat": "P1-04",
+     "installed_months_ago": 70, "expected_life_months": 60, "service_interval_months": 12, "last_serviced_months_ago": 11},
+    {"code": "HQ-1A-PRT-01", "name": "Visitor voucher printer, reception", "type": "PRINTER",
+     "manufacturer": "Brother", "model": "QL-820", "building": "HQ North", "floor": 1, "seat": "1A-01",
+     "installed_months_ago": 28, "expected_life_months": 60, "service_interval_months": 12,
+     "last_serviced_months_ago": 3},
+    {"code": "HQ-3A-PANEL-12", "name": "Room booking panel, Meeting Room 3A", "type": "BOOKING_PANEL",
+     "manufacturer": "Crestron", "model": "TSS-7", "building": "HQ North", "floor": 3, "seat": "3A-12",
+     "installed_months_ago": 18, "expected_life_months": 72},
+    {"code": "HQ-4A-LGT-01", "name": "Corridor lighting circuit, Level 4", "type": "LIGHTING",
+     "manufacturer": "Philips", "model": "CoreLine", "building": "HQ North", "floor": 4, "seat": "4A-01",
+     "installed_months_ago": 58, "expected_life_months": 96, "service_interval_months": 24,
+     "last_serviced_months_ago": 26},
+    {"code": "RA-R2-CHAIR-15", "name": "Task chair, R2-15", "type": "TASK_CHAIR",
+     "manufacturer": "Herman Miller", "model": "Aeron", "building": "Riverside Annex", "floor": 2,
+     "seat": "R2-15", "installed_months_ago": 76, "expected_life_months": 96},
 ]
 
 EMPLOYEES: list[tuple[str, str]] = [
@@ -115,6 +189,7 @@ ENGINEERS: list[dict[str, Any]] = [
 INCIDENTS: list[dict[str, Any]] = [
     {
         "title": "Projector will not power on in Meeting Room 3A",
+        "asset": "AV-3A-PROJ-01",
         "description": "The ceiling projector in 3A shows no power light. We have a client demo on Thursday.",
         "category": "AV_EQUIPMENT", "priority": "HIGH", "reporter": "dana.ruiz",
         "building": "HQ North", "floor": 3, "seat": "3A-12",
@@ -124,6 +199,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Air conditioning leaking over desks on level 2",
+        "asset": "HVAC-HQ2-AHU-04",
         "description": "Water is dripping from the ceiling tile above the operations pod. Desks have been moved.",
         "category": "HVAC", "priority": "CRITICAL", "reporter": "marcus.hale",
         "building": "HQ North", "floor": 2, "seat": "2A-11",
@@ -135,6 +211,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Badge reader rejecting valid passes at the Annex entrance",
+        "asset": "RA-R1-BADGE-01",
         "description": "Roughly one in three taps is rejected at the Riverside Annex main door.",
         "category": "SECURITY", "priority": "HIGH", "reporter": "priya.nair",
         "building": "Riverside Annex", "floor": 1, "seat": "R1-05",
@@ -144,6 +221,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Standing desk motor jammed at 3B-21",
+        "asset": "HQ-3B21-DESK-01",
         "description": "The desk is stuck in the raised position and clicks when the down button is pressed.",
         "category": "FURNITURE", "priority": "LOW", "reporter": "tomas.berg",
         "building": "HQ North", "floor": 3, "seat": "3B-21",
@@ -153,6 +231,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Wi-Fi drops repeatedly in the Lab Floor south corner",
+        "asset": "TP-P1-AP-09",
         "description": "Connection drops every few minutes near P1-09. Ethernet is fine.",
         "category": "NETWORK", "priority": "MEDIUM", "reporter": "yuki.tanaka",
         "building": "Tech Pavilion", "floor": 1, "seat": "P1-09",
@@ -161,6 +240,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Data centre rack 7 running hot",
+        "asset": "HVAC-TP-CRAC-01",
         "description": "Rack 7 inlet temperature is consistently above 27C. Alarm threshold is 25C.",
         "category": "HVAC", "priority": "CRITICAL", "reporter": "yuki.tanaka",
         "building": "Tech Pavilion", "floor": -1, "seat": "B1-RACK-07",
@@ -170,6 +250,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Kitchen tap running continuously on level 1",
+        "asset": "HQ-1B-TAP-02",
         "description": "The cafeteria tap will not shut off fully and wastes water overnight.",
         "category": "PLUMBING", "priority": "MEDIUM", "reporter": "leila.ahmed",
         "building": "HQ North", "floor": 1, "seat": "1B-07",
@@ -179,6 +260,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Laptop docking station not charging",
+        "asset": "HQ-2A12-DOCK-07",
         "description": "The dock at 2A-12 powers the monitors but no longer charges the laptop.",
         "category": "HARDWARE", "priority": "MEDIUM", "reporter": "marcus.hale",
         "building": "HQ North", "floor": 2, "seat": "2A-12",
@@ -187,6 +269,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Flickering lights above the executive corridor",
+        "asset": "HQ-4A-LGT-01",
         "description": "Two ceiling panels flicker intermittently, worse in the afternoon.",
         "category": "ELECTRICAL", "priority": "LOW", "reporter": "dana.ruiz",
         "building": "HQ North", "floor": 4, "seat": "4A-01",
@@ -203,6 +286,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Shared workspace printer jams on every duplex job",
+        "asset": "RA-R2-PRT-14",
         "description": "Single-sided printing works; duplex jams in the rear tray each time.",
         "category": "HARDWARE", "priority": "LOW", "reporter": "tomas.berg",
         "building": "Riverside Annex", "floor": 2, "seat": "R2-14",
@@ -210,6 +294,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Briefing centre microphone produces loud feedback",
+        "asset": "AV-R1-MIC-01",
         "description": "The lapel microphone squeals whenever the presenter walks towards the screen.",
         "category": "AV_EQUIPMENT", "priority": "HIGH", "reporter": "leila.ahmed",
         "building": "Riverside Annex", "floor": 1, "seat": "R1-06",
@@ -219,6 +304,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Desk chair gas lift collapsed at R2-15",
+        "asset": "RA-R2-CHAIR-15",
         "description": "The chair sinks to its lowest position as soon as anyone sits down.",
         "category": "FURNITURE", "priority": "LOW", "reporter": "yuki.tanaka",
         "building": "Riverside Annex", "floor": 2, "seat": "R2-15",
@@ -244,6 +330,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Emergency exit light out on level 2 stairwell",
+        "asset": "HQ-2C-EXIT-01",
         "description": "The illuminated exit sign above the stairwell door is dark.",
         "category": "ELECTRICAL", "priority": "HIGH", "reporter": "priya.nair",
         "building": "HQ North", "floor": 2, "seat": "2C-30",
@@ -254,6 +341,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Guest Wi-Fi voucher printer out of paper",
+        "asset": "HQ-1A-PRT-01",
         "description": "Reception cannot issue visitor Wi-Fi codes.",
         "category": "OTHER", "priority": "LOW", "reporter": "dana.ruiz",
         "building": "HQ North", "floor": 1, "seat": "1A-01",
@@ -263,6 +351,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Meeting room booking panel shows the wrong room name",
+        "asset": "HQ-3A-PANEL-12",
         "description": "The panel outside 3A displays 'Room 3B', confusing attendees.",
         "category": "SOFTWARE", "priority": "LOW", "reporter": "tomas.berg",
         "building": "HQ North", "floor": 3, "seat": "3A-12",
@@ -278,6 +367,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Lab bench power strip tripping the circuit",
+        "asset": "TP-P1-PWR-04",
         "description": "Plugging in the test rig at P1-04 trips the breaker for the whole bench.",
         "category": "ELECTRICAL", "priority": "HIGH", "reporter": "yuki.tanaka",
         "building": "Tech Pavilion", "floor": 1, "seat": "P1-04",
@@ -300,6 +390,7 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Network switch port dead in rack 7",
+        "asset": "TP-B1-SW-07",
         "description": "Port 14 shows no link light with three different known-good cables.",
         "category": "NETWORK", "priority": "HIGH", "reporter": "yuki.tanaka",
         "building": "Tech Pavilion", "floor": -1, "seat": "B1-RACK-07",
@@ -309,10 +400,59 @@ INCIDENTS: list[dict[str, Any]] = [
     },
     {
         "title": "Cafeteria dishwasher leaving residue on trays",
+        "asset": "HQ-1A-DW-01",
         "description": "Trays come out with a white film. Possibly a rinse aid problem.",
         "category": "CLEANING", "priority": "MEDIUM", "reporter": "marcus.hale",
         "building": "HQ North", "floor": 1, "seat": "1A-02",
         "state": "open", "notes": [],
+    },
+    {
+        "title": "Projector lamp failed again in Meeting Room 3A",
+        "asset": "AV-3A-PROJ-01",
+        "description": "Second lamp failure on this unit since the spring. Replaced under warranty last time.",
+        "category": "AV_EQUIPMENT", "priority": "MEDIUM", "reporter": "marcus.hale",
+        "building": "HQ North", "floor": 3, "seat": "3A-12",
+        "state": "closed", "engineer": "sam.okafor",
+        "resolution": "Fitted a new lamp module and reset the hour counter.",
+        "notes": [("sam.okafor", "Third call-out on this projector. Worth pricing a replacement.", True)],
+    },
+    {
+        "title": "Projector shuts down mid-presentation in Meeting Room 3A",
+        "asset": "AV-3A-PROJ-01",
+        "description": "The unit powers off after roughly twenty minutes and will not restart until it cools.",
+        "category": "AV_EQUIPMENT", "priority": "HIGH", "reporter": "priya.nair",
+        "building": "HQ North", "floor": 3, "seat": "3A-12",
+        "state": "resolved", "engineer": "sam.okafor",
+        "resolution": "Cleared a blocked intake filter; thermal cut-out was tripping.",
+        "notes": [],
+    },
+    {
+        "title": "Projector fan noise in Meeting Room 3A",
+        "asset": "AV-3A-PROJ-01",
+        "description": "Loud rattling from the projector housing whenever it is running.",
+        "category": "AV_EQUIPMENT", "priority": "LOW", "reporter": "dana.ruiz",
+        "building": "HQ North", "floor": 3, "seat": "3A-12",
+        "state": "open", "notes": [],
+    },
+    {
+        "title": "Briefing centre projector shows a blue tint",
+        "asset": "AV-R1-PROJ-02",
+        "description": "Whites render blue on the briefing centre screen since the room was rearranged.",
+        "category": "AV_EQUIPMENT", "priority": "LOW", "reporter": "leila.ahmed",
+        "building": "Riverside Annex", "floor": 1, "seat": "R1-05",
+        "state": "resolved", "engineer": "sam.okafor",
+        "resolution": "Colour profile reset to factory defaults.",
+        "notes": [],
+    },
+    {
+        "title": "Boardroom projector remote unresponsive",
+        "asset": "AV-4A-PROJ-03",
+        "description": "The handset does nothing; the unit still works from the wall panel.",
+        "category": "AV_EQUIPMENT", "priority": "LOW", "reporter": "tomas.berg",
+        "building": "HQ North", "floor": 4, "seat": "4A-01",
+        "state": "closed", "engineer": "sam.okafor",
+        "resolution": "Replaced the handset batteries and re-paired it.",
+        "notes": [],
     },
 ]
 
@@ -412,7 +552,7 @@ def email_for(login: str) -> str:
     return f"{login}@{DOMAIN}"
 
 
-def ensure_user(client: Client, login: str, name: str, password: str) -> dict:
+def ensure_user(client: Client, login: str, name: str, password: str, admin_token: Optional[str] = None) -> dict:
     """
     Register an account, tolerating one that already exists.
 
@@ -421,9 +561,14 @@ def ensure_user(client: Client, login: str, name: str, password: str) -> dict:
         login: Local part of the address.
         name: Full name.
         password: Password to set (ignored if the account exists).
+        admin_token: A facility-admin token, used to reactivate the account if
+            testing has left it deactivated.
 
     Returns:
         dict: ``{"email": ..., "id": ...}`` for the account.
+
+    Raises:
+        ApiError: When the account cannot be brought back into a usable state.
     """
     email = email_for(login)
     status, body = client.request(
@@ -436,7 +581,27 @@ def ensure_user(client: Client, login: str, name: str, password: str) -> dict:
         return {"email": email, "id": body["id"], "created": True}
 
     # Already present: identify it by authenticating as that account.
-    token = client.login(email, password)
+    try:
+        token = client.login(email, password)
+    except ApiError as exc:
+        # Deactivating an account is one of the things this application is for,
+        # so a database that has been used will have deactivated accounts in it
+        # - including, sooner or later, a seeded one. Seeding is meant to
+        # converge on a known-good demo state, so it puts the account back
+        # rather than stopping and asking someone to do it by hand.
+        if "account_disabled" not in str(exc) or admin_token is None:
+            raise
+        print(f"    {email} was deactivated; reactivating it")
+        # `GET /users` answers with a plain list, unlike the paged incident list.
+        _, accounts = client.request(
+            "GET", f"/users?q={urllib.parse.quote(email)}&limit=50", token=admin_token
+        )
+        match = next((item for item in accounts if item["email"] == email), None)
+        if match is None:
+            raise
+        client.request("PATCH", f"/users/{match['id']}/status", {"is_active": True}, token=admin_token)
+        token = client.login(email, password)
+
     _, me = client.request("GET", "/auth/me", token=token)
     return {"email": email, "id": me["id"], "created": False}
 
@@ -514,6 +679,61 @@ def ensure_seat(client: Client, token: str, floor_id: int, code: str) -> dict:
     return next(item for item in existing if item["code"] == code)
 
 
+def ensure_asset(client: Client, token: str, ctx: dict, spec: dict) -> dict:
+    """
+    Register one unit of equipment, reusing it when the code already exists.
+
+    Args:
+        client: The API client.
+        token: A facility admin token.
+        ctx: Seeding context holding the building/floor/seat lookups.
+        spec: One entry from ``ASSETS``.
+
+    Returns:
+        dict: The asset record.
+    """
+    query = urllib.parse.quote(spec["code"])
+    _, existing = client.request("GET", f"/assets?q={query}&include_retired=true", token=token)
+    for row in existing:
+        if row["code"] == spec["code"]:
+            return row
+
+    # Ages are stored as months-before-now so the fixture does not quietly age
+    # into nonsense; 30.44 is the mean month length, which is accurate enough
+    # for a figure the UI rounds to one decimal place.
+    installed = datetime.date.today() - datetime.timedelta(days=round(spec["installed_months_ago"] * 30.44))
+    last_serviced = (
+        datetime.date.today() - datetime.timedelta(days=round(spec["last_serviced_months_ago"] * 30.44))
+        if spec.get("last_serviced_months_ago") is not None
+        else None
+    )
+    building = ctx["buildings"][spec["building"]]
+    floor = ctx["floors"][(spec["building"], spec["floor"])]
+    seat = ctx["seats"][(spec["building"], spec["floor"], spec["seat"])]
+
+    _, asset = client.request(
+        "POST",
+        "/assets",
+        {
+            "code": spec["code"],
+            "name": spec["name"],
+            "asset_type": spec["type"],
+            "manufacturer": spec.get("manufacturer"),
+            "model": spec.get("model"),
+            "building_id": building["id"],
+            "floor_id": floor["id"],
+            "seat_id": seat["id"],
+            "installed_on": installed.isoformat(),
+            "expected_life_months": spec["expected_life_months"],
+            "service_interval_months": spec.get("service_interval_months"),
+            "last_serviced_on": last_serviced.isoformat() if last_serviced else None,
+        },
+        token=token,
+        expect=(201,),
+    )
+    return asset
+
+
 def ensure_engineer(client: Client, token: str, user_id: int, spec: dict) -> dict:
     """
     Create an engineer profile, or return the existing one for that user.
@@ -578,10 +798,24 @@ def seed_incident(client: Client, ctx: dict, spec: dict, password: str) -> Optio
     """
     admin_token = ctx["admin_token"]
 
-    # Idempotency: skip when an incident with this exact title already exists.
+    # Idempotency: an incident with this exact title is left alone, except for
+    # one thing. A database seeded before the equipment register existed has
+    # every incident but none of the links to a unit, and skipping outright
+    # would leave it that way however often this is re-run - so an existing
+    # incident that should name a unit, and does not, is updated in place.
     query = urllib.parse.quote(spec["title"][:60])
     _, page = client.request("GET", f"/incidents?q={query}&limit=100", token=admin_token)
-    if any(item["title"] == spec["title"] for item in page["items"]):
+    existing = next((item for item in page["items"] if item["title"] == spec["title"]), None)
+    if existing is not None:
+        asset = ctx["assets"].get(spec["asset"]) if spec.get("asset") else None
+        if asset and not existing.get("asset"):
+            client.request(
+                "PUT",
+                f"/incidents/{existing['id']}",
+                {"asset_id": asset["id"]},
+                token=admin_token,
+            )
+            return existing["id"]
         return None
 
     building = ctx["buildings"][spec["building"]]
@@ -600,6 +834,7 @@ def seed_incident(client: Client, ctx: dict, spec: dict, password: str) -> Optio
             "building_id": building["id"],
             "floor_id": floor["id"],
             "seat_id": seat["id"],
+            "asset_id": (ctx["assets"].get(spec["asset"]) or {}).get("id") if spec.get("asset") else None,
         },
         token=reporter_token,
     )
@@ -735,11 +970,18 @@ def main() -> int:
     print(f"  Facility admin: {admin['email']}")
 
     for login, name in EMPLOYEES:
-        ensure_user(client, login, name, password)
+        ensure_user(client, login, name, password, admin_token)
     print(f"  Employees: {len(EMPLOYEES)}")
 
     # 2. Facilities.
-    ctx: dict[str, Any] = {"admin_token": admin_token, "buildings": {}, "floors": {}, "seats": {}, "engineers": {}}
+    ctx: dict[str, Any] = {
+        "admin_token": admin_token,
+        "buildings": {},
+        "floors": {},
+        "seats": {},
+        "engineers": {},
+        "assets": {},
+    }
     seat_total = 0
     for spec in BUILDINGS:
         building = ensure_building(client, admin_token, spec)
@@ -755,14 +997,19 @@ def main() -> int:
     print(f"  Facilities: {len(BUILDINGS)} buildings, "
           f"{sum(len(b['floors']) for b in BUILDINGS)} floors, {seat_total} seats")
 
-    # 3. Engineers, created available so that seeding can assign work to them.
+    # 3. Equipment, placed before the incidents that are filed against it.
+    for spec in ASSETS:
+        ctx["assets"][spec["code"]] = ensure_asset(client, admin_token, ctx, spec)
+    print(f"  Equipment: {len(ASSETS)} units")
+
+    # 4. Engineers, created available so that seeding can assign work to them.
     for spec in ENGINEERS:
-        user = ensure_user(client, spec["login"], spec["name"], password)
+        user = ensure_user(client, spec["login"], spec["name"], password, admin_token)
         profile = ensure_engineer(client, admin_token, user["id"], spec)
         ctx["engineers"][spec["login"]] = profile
     print(f"  Engineers: {len(ENGINEERS)}")
 
-    # 4. Incidents, each driven through the real workflow.
+    # 5. Incidents, each driven through the real workflow.
     created = 0
     skipped = 0
     for spec in INCIDENTS:
@@ -771,9 +1018,9 @@ def main() -> int:
             skipped += 1
         else:
             created += 1
-    print(f"  Incidents: {created} created, {skipped} already present")
+    print(f"  Incidents: {created} created or linked to equipment, {skipped} already present")
 
-    # 5. Apply the configured availability now that assignments are done.
+    # 6. Apply the configured availability now that assignments are done.
     for spec in ENGINEERS:
         if not spec["is_available"]:
             client.request(
@@ -783,7 +1030,7 @@ def main() -> int:
                 token=admin_token,
             )
 
-    # 6. Summary straight from the dashboard, as a facility admin sees it.
+    # 7. Summary straight from the dashboard, as a facility admin sees it.
     _, summary = client.request("GET", "/dashboard/summary", token=admin_token)
     print("\n" + "-" * 62)
     print("Dashboard summary")
@@ -794,6 +1041,19 @@ def main() -> int:
     print(f"  Unassigned      : {summary['unassigned_total']}")
     print(f"  By status       : " + ", ".join(f"{b['key']}={b['count']}" for b in summary["by_status"]))
     print(f"  By priority     : " + ", ".join(f"{b['key']}={b['count']}" for b in summary["by_priority"]))
+
+    _, upkeep = client.request("GET", "/maintenance/summary", token=admin_token)
+    print("\n" + "-" * 62)
+    print("Maintenance")
+    print("-" * 62)
+    print(f"  Units tracked   : {upkeep['assets_tracked']}")
+    print(f"  Needing review  : {upkeep['assets_needing_review']}")
+    print(f"  Past their life : {upkeep['assets_past_expected_life']}")
+    print(f"  Service overdue : {upkeep['assets_service_overdue']}")
+    print(f"  Service due soon: {upkeep['assets_service_due_soon']}")
+    print(f"  No interval set : {upkeep['assets_without_service_interval']}")
+    print(f"  Incidents linked: {upkeep['incidents_linked']}/{upkeep['incidents_total']}"
+          f" ({upkeep['linked_percent']}%)")
 
     print("\n" + "-" * 62)
     print(f"Sign-in credentials (password for every account: {password})")

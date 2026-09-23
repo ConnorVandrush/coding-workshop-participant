@@ -145,6 +145,22 @@ test.describe('accessibility', () => {
     expect(violations, `\n    ${describe(violations)}\n`).toEqual([])
   })
 
+  test('the equipment page has no violations for the admin', async ({ page }) => {
+    await signIn(page, ACCOUNTS.admin)
+    await page.getByRole('link', { name: 'Equipment' }).click()
+    await page.getByRole('heading', { name: 'Equipment', exact: true }).waitFor()
+    const violations = await audit(page)
+    expect(violations, `\n    ${describe(violations)}\n`).toEqual([])
+  })
+
+  test('the maintenance page has no violations for the admin', async ({ page }) => {
+    await signIn(page, ACCOUNTS.admin)
+    await page.getByRole('link', { name: 'Maintenance' }).click()
+    await page.getByRole('heading', { name: 'Maintenance', exact: true }).waitFor()
+    const violations = await audit(page)
+    expect(violations, `\n    ${describe(violations)}\n`).toEqual([])
+  })
+
   test('every page is reachable and operable by keyboard alone', async ({ page }) => {
     // axe cannot test this: it inspects the DOM, and a control can carry a
     // perfect accessible name while being impossible to reach with Tab.

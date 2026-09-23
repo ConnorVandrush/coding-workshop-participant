@@ -18,6 +18,9 @@ export const DEFAULT_FILTERS = {
   priority: '',
   category: '',
   building_id: '',
+  // Set by the maintenance screen to show one unit's failure history. There is
+  // no control for it in the filter bar; clearing the filters drops it.
+  asset_id: '',
   assignee_id: '',
   is_escalated: '',
   unassigned: '',

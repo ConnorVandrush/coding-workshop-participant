@@ -30,6 +30,28 @@ test.describe('role-based access', () => {
     await expect(page.getByText(ACCOUNTS.employee)).toBeVisible()
   })
 
+  test('maintenance is staff-only, and read-only for an engineer', async ({ page }) => {
+    await signIn(page, ACCOUNTS.engineer)
+    await page.getByRole('link', { name: 'Maintenance' }).click()
+    await expect(page.getByRole('heading', { name: 'Maintenance', exact: true })).toBeVisible()
+    // An engineer acts on the figures but does not own the register.
+    await expect(page.getByRole('button', { name: 'Register equipment' })).toHaveCount(0)
+  })
+
+  test('the equipment register is staff-only, and read-only for an engineer', async ({ page }) => {
+    await signIn(page, ACCOUNTS.engineer)
+    await page.getByRole('link', { name: 'Equipment' }).click()
+    await expect(page.getByRole('heading', { name: 'Equipment', exact: true })).toBeVisible()
+    // The register is the admin's to keep; an engineer reads it.
+    await expect(page.getByRole('button', { name: 'Register equipment' })).toHaveCount(0)
+  })
+
+  test('an employee is offered neither the equipment nor the maintenance screen', async ({ page }) => {
+    await signIn(page, ACCOUNTS.employee)
+    await expect(page.getByRole('link', { name: 'Equipment' })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Maintenance' })).toHaveCount(0)
+  })
+
   test('an employee cannot edit the facility hierarchy', async ({ page }) => {
     await signIn(page, ACCOUNTS.employee)
     await page.getByRole('link', { name: 'Facilities' }).click()

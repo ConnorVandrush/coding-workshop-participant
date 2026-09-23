@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import IncidentsPage from './IncidentsPage';
-import { EMPLOYEE, mockApi, renderPage } from '../test/utils';
+import { ADMIN, EMPLOYEE, ENGINEER, mockApi, renderPage } from '../test/utils';
+import { setFilters } from '../store/incidentsSlice';
 
 vi.mock('react-responsive', () => ({ useMediaQuery: () => true }));
 
@@ -186,6 +187,97 @@ describe('reporting an incident', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /^Report$/i }));
 
     expect(await screen.findByText('Building 9 does not exist')).toBeInTheDocument();
+  });
+});
+
+describe('what the list is scoped to', () => {
+  it('tells an engineer why rows they are not assigned to are there', async () => {
+    api();
+    renderPage(<IncidentsPage />, { user: ENGINEER });
+    expect(
+      await screen.findByText(/yours, plus other faults on equipment you are working on/),
+    ).toBeInTheDocument();
+  });
+
+  it('tells an employee the list is their own reports', async () => {
+    api();
+    renderPage(<IncidentsPage />, { user: EMPLOYEE });
+    expect(await screen.findByText(/the ones you reported/)).toBeInTheDocument();
+  });
+
+  it('says nothing to an admin, who sees everything', async () => {
+    api();
+    renderPage(<IncidentsPage />, { user: ADMIN });
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByText(/equipment you are working on/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/the ones you reported/)).not.toBeInTheDocument();
+  });
+});
+
+describe('naming the failed unit while reporting', () => {
+  const equipment = [{
+    id: 4, code: 'AV-3A-PROJ-01', name: 'Ceiling projector, Meeting Room 3A',
+    asset_type: 'PROJECTOR', building_id: 1, building_name: 'HQ North',
+    floor_id: 10, floor_level: 3, seat_id: 100, seat_code: '3A-12',
+    installed_on: '2020-07-14', expected_life_months: 60,
+    service_interval_months: 12, last_serviced_on: '2024-01-10',
+    next_service_due: '2025-01-10', service_status: 'overdue', days_until_service: -620,
+    retired_on: null, is_retired: false, notes: null,
+    incident_count: 4, open_incident_count: 1, last_incident_at: '2026-09-22T10:00:00Z',
+    created_at: '2026-09-01T09:00:00Z',
+  }];
+
+  it('offers the equipment field even before a location is chosen', async () => {
+    api({ 'GET /assets': equipment });
+    renderPage(<IncidentsPage />, { user: EMPLOYEE });
+    await userEvent.click(await screen.findByRole('button', { name: /Report incident/ }));
+
+    const field = await screen.findByLabelText('Equipment');
+    expect(field).toBeInTheDocument();
+    expect(screen.getByText('Choose a location above to narrow this list')).toBeInTheDocument();
+  });
+
+  it('sends the chosen unit with the report', async () => {
+    const fetchMock = api({ 'GET /assets': equipment });
+    renderPage(<IncidentsPage />, { user: EMPLOYEE });
+    await userEvent.click(await screen.findByRole('button', { name: /Report incident/ }));
+
+    const dialog = screen.getByRole('dialog');
+    await userEvent.type(within(dialog).getByLabelText(/Title/), 'Projector is dead again');
+    await userEvent.type(within(dialog).getByLabelText(/What is wrong/), 'No power light at all.');
+    await userEvent.click(within(dialog).getByLabelText('Equipment'));
+    await userEvent.click(await screen.findByRole('option', { name: /AV-3A-PROJ-01/ }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Report' }));
+
+    await waitFor(() => {
+      const posted = fetchMock.mock.calls.find(
+        ([url, init]) => init?.method === 'POST' && String(url).endsWith('/incidents'),
+      );
+      expect(posted).toBeTruthy();
+      expect(JSON.parse(posted[1].body).asset_id).toBe(4);
+    });
+  });
+
+  it('says so rather than vanishing when nothing is registered', async () => {
+    api({ 'GET /assets': [] });
+    renderPage(<IncidentsPage />, { user: EMPLOYEE });
+    await userEvent.click(await screen.findByRole('button', { name: /Report incident/ }));
+
+    expect(await screen.findByText('No equipment registered at this location yet')).toBeInTheDocument();
+  });
+});
+
+describe('the equipment filter', () => {
+  it('says which unit it is showing, and can be dismissed', async () => {
+    api();
+    const { store } = renderPage(<IncidentsPage />, { user: ADMIN });
+    await screen.findByText('Projector will not power on');
+
+    store.dispatch(setFilters({ asset_id: 4 }));
+    expect(await screen.findByText(/Showing failures of/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('CancelIcon'));
+    await waitFor(() => expect(store.getState().incidents.filters.asset_id).toBe(''));
   });
 });
 

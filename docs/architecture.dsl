@@ -24,7 +24,7 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
 
         acme = softwareSystem "Facility Incident Management Platform" "Centralises incident reporting, assignment and reporting across ACME's buildings." {
 
-            spa = container "Single-Page Application" "Serves the three personas one role-aware UI: report and track incidents, drive the workflow, manage facilities and engineers, and read the dashboards." "React 19, Vite, Material UI, Redux Toolkit" "Browser"
+            spa = container "Single-Page Application" "Serves the three personas one role-aware UI: report and track incidents, drive the workflow, manage facilities, the equipment register and engineers, and read the dashboards and the maintenance figures. Staff-only screens are kept from employees at the navigation, the route and the API alike." "React 19, Vite, Material UI, Redux Toolkit" "Browser"
 
             assets = container "Static Site Bucket" "Holds the built SPA - index.html, hashed JS and CSS bundles, and the PWA manifest and service worker." "Amazon S3" "Storage"
 
@@ -39,7 +39,9 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
                 usersRouter = component "Users Router" "Facility admins list accounts, change roles and deactivate people." "FastAPI router"
                 facilitiesRouter = component "Facilities Router" "CRUD for the estate: buildings, their floors, and the seats on a floor." "FastAPI router"
                 engineersRouter = component "Engineers Router" "CRUD for engineer profiles - specialties, availability and the active-incident ceiling that caps assignment." "FastAPI router"
-                incidentsRouter = component "Incidents Router" "Incident CRUD, assignment, status transitions, escalation and the note thread, each scoped to what the caller's role may see and do." "FastAPI router"
+                assetsRouter = component "Assets Router" "CRUD for the equipment register - one row per physical unit, with its location, install date, expected service life and how often it needs servicing. Recording a service here restarts that interval. Readable by everyone, because a reporter has to be able to say which unit failed." "FastAPI router"
+                incidentsRouter = component "Incidents Router" "Incident CRUD, assignment, status transitions, escalation and the note thread, each scoped to what the caller's role may see and do: a reporter sees what they filed, an engineer their own work plus the rest of the history of any unit they hold work on, an admin everything." "FastAPI router"
+                maintenanceRouter = component "Maintenance Router" "Ranks units for attention and reports reliability by equipment class, from counting rather than from a model: repeated failures, failures against the median for the type, age past expected life, and a service that has fallen due. Staff only." "FastAPI router"
                 dashboardRouter = component "Dashboard Router" "Per-persona reporting: counts by status and priority, location hotspots, acknowledge/assign/resolve durations, and engineer workload." "FastAPI router"
                 notificationsRouter = component "Notifications Router" "Serves a person's notification feed and marks it read, draining a bounded batch of the outbox as it goes." "FastAPI router"
 
@@ -51,7 +53,7 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
 
             notifier = container "Notification Worker" "Drains the whole event backlog into per-recipient notification rows wherever something can invoke it, so fan-out is not paid for by whoever happens to read their feed." "Python 3.13 on AWS Lambda"
 
-            db = container "Facility Database" "Users and roles, the building/floor/seat estate, engineer profiles, incidents and their notes, notifications, the event outbox and refresh-token digests." "Amazon Aurora Serverless v2, PostgreSQL 17.7" "Database" {
+            db = container "Facility Database" "Users and roles, the building/floor/seat estate, the equipment register, engineer profiles, incidents and their notes, notifications, the event outbox and refresh-token digests." "Amazon Aurora Serverless v2, PostgreSQL 17.7" "Database" {
                 # The entity-relationship model, one level below this box. The
                 # element is clickable in Structurizr renderers; the same
                 # diagram is in the repository as docs/schema.dbml, which is
@@ -81,6 +83,8 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
         acme.api.middleware -> acme.api.facilitiesRouter "Routes to"
         acme.api.middleware -> acme.api.engineersRouter "Routes to"
         acme.api.middleware -> acme.api.incidentsRouter "Routes to"
+        acme.api.middleware -> acme.api.assetsRouter "Routes to"
+        acme.api.middleware -> acme.api.maintenanceRouter "Routes to"
         acme.api.middleware -> acme.api.dashboardRouter "Routes to"
         acme.api.middleware -> acme.api.notificationsRouter "Routes to"
 
@@ -89,6 +93,8 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
         acme.api.facilitiesRouter -> acme.api.security "Checks the caller is a facility admin with"
         acme.api.engineersRouter -> acme.api.security "Checks the caller is a facility admin with"
         acme.api.incidentsRouter -> acme.api.security "Resolves the caller's role and engineer profile with"
+        acme.api.assetsRouter -> acme.api.security "Checks the caller is a facility admin before a write with"
+        acme.api.maintenanceRouter -> acme.api.security "Admits only engineers and facility admins through"
         acme.api.dashboardRouter -> acme.api.security "Scopes the figures to the caller with"
         acme.api.notificationsRouter -> acme.api.security "Identifies the caller with"
 
@@ -102,6 +108,8 @@ workspace "ACME Facility Incident Management" "Self-service reporting and resolu
         acme.api.facilitiesRouter -> acme.api.dataAccess "Reads and writes through"
         acme.api.engineersRouter -> acme.api.dataAccess "Reads and writes through"
         acme.api.incidentsRouter -> acme.api.dataAccess "Reads and writes through"
+        acme.api.assetsRouter -> acme.api.dataAccess "Reads and writes through"
+        acme.api.maintenanceRouter -> acme.api.dataAccess "Aggregates failures per unit through"
         acme.api.dashboardRouter -> acme.api.dataAccess "Aggregates through"
         acme.api.security -> acme.api.dataAccess "Loads accounts and token digests through"
         acme.api.duplicates -> acme.api.dataAccess "Ranks candidates through"

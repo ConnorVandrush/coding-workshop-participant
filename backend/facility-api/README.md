@@ -145,13 +145,19 @@ security workflow does not trip over their `assert` statements.
 | ---------- | :------: | :------: | :------------: |
 | Register, log in | ✓ | ✓ | ✓ |
 | Report an incident | ✓ | ✓ | ✓ |
-| See incidents | own only | assigned + unassigned | all |
+| See incidents | own only | assigned + the rest of the history of units they hold work on | all |
 | Edit an incident | own, while `OPEN` | assigned | any |
 | Change priority | request only | assigned | any |
 | Assign work | – | – | anyone |
 | Drive the workflow | close/reopen own resolved | assigned | any |
 | Escalate | own | assigned | any (and can clear) |
 | Internal notes | – | ✓ | ✓ |
+| Attribute a fault to a unit | ✓ | ✓ | ✓ |
+| Read the equipment register | ✓ | ✓ | ✓ |
+| Browse the equipment register | – | ✓ | ✓ |
+| Maintenance analytics | – | ✓ | ✓ |
+| Equipment register CRUD | – | – | ✓ |
+| Record a service | – | – | ✓ |
 | Facilities & engineer CRUD | – | – | ✓ |
 | Delete incidents, manage users | – | – | ✓ |
 
@@ -181,6 +187,10 @@ restricted to `@acme.inc` addresses.
 | GET PUT DELETE | `/floors/{id}` | Read / update / delete a floor |
 | GET POST | `/floors/{id}/seats` | List / add seats |
 | GET PUT DELETE | `/seats/{id}` | Read / update / delete a seat |
+| GET POST | `/assets` | List equipment with failure counts / register a unit (admin) |
+| GET | `/assets/types` | Equipment classes already in use |
+| GET PUT DELETE | `/assets/{id}` | Read / update / remove a unit (admin to write) |
+| POST | `/assets/{id}/service` | Record a service, restarting the interval (admin) |
 | GET POST | `/engineers` | List engineers with workload / create a profile |
 | GET PUT DELETE | `/engineers/{id}` | Read / update / delete a profile |
 | GET POST | `/incidents` | Search+filter / report |
@@ -195,6 +205,9 @@ restricted to `@acme.inc` addresses.
 | GET | `/dashboard/hotspots` | Buildings / floors / seats with recurring issues |
 | GET | `/dashboard/sla` | Acknowledge, assign, resolve and close timings |
 | GET | `/dashboard/engineers` | Work distribution across engineers (admin) |
+| GET | `/maintenance/summary` | Register size, units flagged, incident-to-unit coverage (staff) |
+| GET | `/maintenance/assets/review` | Units ranked for replacement, with the reasons (staff) |
+| GET | `/maintenance/types` | Failures per unit by equipment class (staff) |
 
 ## Demo data
 

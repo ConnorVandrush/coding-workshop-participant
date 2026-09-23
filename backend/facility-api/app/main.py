@@ -14,6 +14,9 @@ are additionally prefixed with ``/api/facility-api``):
     PATCH  /users/{id}/role        change a role                (facility_admin)
     PATCH  /users/{id}/status      activate / deactivate        (facility_admin)
     CRUD   /buildings, /buildings/{id}/floors, /floors/{id}/seats
+    CRUD   /assets                 equipment register  + /assets/types
+    GET    /maintenance/summary, /maintenance/assets/review, /maintenance/types
+                                   engineers and facility admins only
     CRUD   /engineers
     CRUD   /incidents  + /assign, /status, /escalate, /notes
     GET    /dashboard/summary, /hotspots, /sla, /engineers
@@ -40,11 +43,13 @@ from app.domain import workflow_graph
 from app.errors import ApiError
 from app.middleware import RequestLogMiddleware, ServicePrefixMiddleware
 from app.routers import (
+    assets,
     auth,
     dashboard,
     engineers,
     facilities,
     incidents,
+    maintenance,
     notifications,
     users,
 )
@@ -203,9 +208,11 @@ async def workflow() -> dict[str, Any]:
 api.include_router(auth.router)
 api.include_router(users.router)
 api.include_router(facilities.router)
+api.include_router(assets.router)
 api.include_router(engineers.router)
 api.include_router(incidents.router)
 api.include_router(dashboard.router)
+api.include_router(maintenance.router)
 api.include_router(notifications.router)
 
 # Outermost wrapper: must run before routing, hence not add_middleware().

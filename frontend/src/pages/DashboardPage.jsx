@@ -32,7 +32,6 @@ import usePolling from '../hooks/usePolling';
 import {
   fetchDashboard,
   fetchWorkflow,
-  selectHotspots,
   selectSla,
   selectSummary,
   selectWorkflow,
@@ -148,7 +147,6 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const user = useSelector(selectUser);
   const summary = useSelector(selectSummary);
-  const hotspots = useSelector(selectHotspots);
   const sla = useSelector(selectSla);
   const workload = useSelector(selectWorkload);
   const workflow = useSelector(selectWorkflow);
@@ -201,7 +199,7 @@ export default function DashboardPage() {
         {isAdmin
           ? 'Every incident across the estate.'
           : summary.scope === 'engineer'
-            ? 'Incidents assigned to you, plus anything still unassigned.'
+            ? 'Incidents assigned to you, plus other faults on equipment you are working on.'
             : 'Incidents you have reported.'}
       </Typography>
 
@@ -264,50 +262,7 @@ export default function DashboardPage() {
       </Box>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 12, md: 8 }}>
-          <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h3" gutterBottom>
-              Recurring issue hotspots
-            </Typography>
-            <Grid container spacing={2}>
-              {[
-                ['Buildings', hotspots?.buildings ?? []],
-                ['Floors', hotspots?.floors ?? []],
-                ['Seats', hotspots?.seats ?? []],
-              ].map(([label, rows]) => (
-                <Grid size={{ xs: 12, sm: 4 }} key={label}>
-                  <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
-                    {label}
-                  </Typography>
-                  {rows.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      —
-                    </Typography>
-                  ) : (
-                    <Stack spacing={0.5} sx={{ mt: 1 }}>
-                      {rows.map((row) => (
-                        <Box key={`${label}-${row.id}`} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                          {/* Seat labels are long; truncate but expose the
-                              full text natively on hover and to screen readers. */}
-                          <Typography variant="body2" noWrap title={row.label} sx={{ mr: 1 }}>
-                            {row.label}
-                          </Typography>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {row.count}
-                            <Typography variant="caption" component="span" color="text.secondary">
-                              {` (${row.open_count} open)`}
-                            </Typography>
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Stack>
-                  )}
-                </Grid>
-              ))}
-            </Grid>
-          </Paper>
-        </Grid>
-        <Grid size={{ xs: 12, md: 4 }}>
+        <Grid size={{ xs: 12 }}>
           <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
             <Typography variant="h3" gutterBottom>
               Response times

@@ -46,6 +46,18 @@ const notes = [{
   created_at: '2026-09-22T10:05:00Z',
 }];
 
+const equipment = [{
+  id: 4, code: 'AV-3A-PROJ-01', name: 'Ceiling projector, Meeting Room 3A',
+  asset_type: 'PROJECTOR', building_id: 1, building_name: 'HQ North',
+  floor_id: 3, floor_level: 3, seat_id: 7, seat_code: '3A-12',
+  installed_on: '2020-07-14', expected_life_months: 60,
+  service_interval_months: 12, last_serviced_on: '2024-01-10',
+  next_service_due: '2025-01-10', service_status: 'overdue', days_until_service: -620,
+  retired_on: null, is_retired: false, notes: null,
+  incident_count: 4, open_incident_count: 1, last_incident_at: '2026-09-22T10:00:00Z',
+  created_at: '2026-09-01T09:00:00Z',
+}];
+
 const engineers = [{
   id: 5, user_id: 3, email: 'sam.okafor@acme.inc', full_name: 'Sam Okafor',
   specialties: ['AV_EQUIPMENT'], phone: null, is_available: true,
@@ -66,6 +78,7 @@ const api = (overrides = {}) => mockApi({
   'GET /incidents/:id/notes': notes,
   'GET /incidents/:id/related': { matches: [] },
   'GET /engineers': engineers,
+  'GET /assets': equipment,
   'GET /workflow': workflow,
   ...overrides,
 });
@@ -373,5 +386,37 @@ describe('related incidents', () => {
     await screen.findByText('Projector will not power on');
     expect(screen.queryByTestId('similar-incidents')).not.toBeInTheDocument();
     expect(screen.queryByText(/nope/)).not.toBeInTheDocument();
+  });
+});
+
+describe('attributing a fault to a unit', () => {
+  it('shows the unit an incident was filed against', async () => {
+    api({ 'GET /incidents/:id': incident({ asset: { id: 4, code: 'AV-3A-PROJ-01', name: 'Ceiling projector, Meeting Room 3A', asset_type: 'PROJECTOR' } }) });
+    renderDetail(ADMIN);
+    expect(await screen.findByText('AV-3A-PROJ-01 — Ceiling projector, Meeting Room 3A')).toBeInTheDocument();
+  });
+
+  it('lets a facility admin attribute an incident that was filed without one', async () => {
+    const fetchMock = api({ 'GET /incidents/:id': incident({ asset: null }) });
+    renderDetail(ADMIN);
+    // "Equipment" appears twice - as a fact and as this panel's heading - so
+    // the control itself is what the test waits for.
+    await screen.findByLabelText('Failed unit');
+
+    await userEvent.click(screen.getByLabelText('Failed unit'));
+    await userEvent.click(await screen.findByRole('option', { name: /AV-3A-PROJ-01/ }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+      expect(put).toBeTruthy();
+      expect(JSON.parse(put[1].body).asset_id).toBe(4);
+    });
+  });
+
+  it('hides the control from an employee who is not the reporter', async () => {
+    api();
+    renderDetail(EMPLOYEE);
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByLabelText('Failed unit')).not.toBeInTheDocument();
   });
 });

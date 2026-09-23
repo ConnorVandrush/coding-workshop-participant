@@ -72,6 +72,31 @@ Table "engineer_profiles" {
   "created_at" timestamptz [not null, default: `now()`]
 }
 
+Table "assets" {
+  "id" int8 [pk, not null, increment]
+  "code" text [unique, not null]
+  "name" text [not null]
+  "asset_type" text [not null]
+  "manufacturer" text
+  "model" text
+  "building_id" int8
+  "floor_id" int8
+  "seat_id" int8
+  "installed_on" date
+  "expected_life_months" int4 [check: `expected_life_months > 0`]
+  "service_interval_months" int4 [check: `service_interval_months > 0`]
+  "last_serviced_on" date
+  "retired_on" date
+  "notes" text
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    building_id [type: btree, name: "idx_assets_building"]
+    seat_id [type: btree, name: "idx_assets_seat"]
+    asset_type [type: btree, name: "idx_assets_type"]
+  }
+}
+
 Table "incidents" {
   "id" int8 [pk, not null, increment]
   "title" text [not null]
@@ -94,8 +119,10 @@ Table "incidents" {
   "assigned_at" timestamptz
   "resolved_at" timestamptz
   "closed_at" timestamptz
+  "asset_id" int8
 
   Indexes {
+    asset_id [type: btree, name: "idx_incidents_asset"]
     assignee_id [type: btree, name: "idx_incidents_assignee"]
     building_id [type: btree, name: "idx_incidents_building"]
     category [type: btree, name: "idx_incidents_category"]
@@ -162,6 +189,12 @@ Table "notification_events" {
   }
 }
 
+Ref "assets_building_id_fkey":"buildings"."id" ?<? "assets"."building_id" [delete: set null]
+
+Ref "assets_floor_id_fkey":"floors"."id" ?<? "assets"."floor_id" [delete: set null]
+
+Ref "assets_seat_id_fkey":"seats"."id" ?<? "assets"."seat_id" [delete: set null]
+
 Ref "engineer_profiles_user_id_fkey":"users"."id" <? "engineer_profiles"."user_id" [delete: cascade]
 
 Ref "floors_building_id_fkey":"buildings"."id" <? "floors"."building_id" [delete: cascade]
@@ -169,6 +202,8 @@ Ref "floors_building_id_fkey":"buildings"."id" <? "floors"."building_id" [delete
 Ref "incident_notes_author_id_fkey":"users"."id" <? "incident_notes"."author_id" [delete: restrict]
 
 Ref "incident_notes_incident_id_fkey":"incidents"."id" <? "incident_notes"."incident_id" [delete: cascade]
+
+Ref "incidents_asset_id_fkey":"assets"."id" ?<? "incidents"."asset_id" [delete: set null]
 
 Ref "incidents_assignee_id_fkey":"engineer_profiles"."id" ?<? "incidents"."assignee_id" [delete: set null]
 

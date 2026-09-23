@@ -25,9 +25,12 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import AddIcon from '@mui/icons-material/Add';
+import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useDispatch, useSelector } from 'react-redux';
+import EquipmentDialog from '../components/EquipmentDialog';
+import { EMPTY_EQUIPMENT, equipmentPayload, serviceLabel } from '../components/equipmentDraft';
 import { selectUser } from '../store/authSlice';
 import {
   createBuilding,
@@ -43,6 +46,7 @@ import {
   selectBuildings,
   selectFloors,
 } from '../store/facilitiesSlice';
+import { createAsset, deleteAsset, fetchAssets, selectAssets } from '../store/maintenanceSlice';
 import { notify } from '../store/uiSlice';
 import { errorFields, errorMessage } from '../store/thunkUtils';
 
@@ -57,11 +61,16 @@ export default function FacilitiesPage() {
   const buildings = useSelector(selectBuildings);
   const floors = useSelector(selectFloors);
   const seatsByFloor = useSelector((state) => state.facilities.seatsByFloor);
+  const assets = useSelector(selectAssets);
   const selectedBuildingId = useSelector((state) => state.facilities.selectedBuildingId);
 
   const [buildingDraft, setBuildingDraft] = useState({ name: '', address: '' });
   const [floorDraft, setFloorDraft] = useState({ level: '', name: '' });
   const [seatDrafts, setSeatDrafts] = useState({});
+  // Equipment is added from the floor it sits on, the same way seats are, so
+  // the dialog is opened with that floor already fixed.
+  const [equipmentFor, setEquipmentFor] = useState(null);
+  const [equipmentDraft, setEquipmentDraft] = useState(EMPTY_EQUIPMENT);
   // Per-field messages from a rejected request, so each one can be shown
   // beside the input that caused it rather than only in a toast.
   const [fieldErrors, setFieldErrors] = useState({});
@@ -75,6 +84,9 @@ export default function FacilitiesPage() {
 
   useEffect(() => {
     if (selectedBuildingId) dispatch(fetchFloors(selectedBuildingId));
+    // The whole building's equipment at once: the floors are an accordion, and
+    // a request per floor would refetch every time one is opened.
+    if (selectedBuildingId) dispatch(fetchAssets({ building_id: selectedBuildingId, limit: 500 }));
   }, [dispatch, selectedBuildingId]);
 
   /**
@@ -94,6 +106,33 @@ export default function FacilitiesPage() {
       }),
     );
     return ok;
+  };
+
+  /**
+   * Open the equipment dialog against one floor.
+   *
+   * @param {object} floor The floor the unit sits on.
+   */
+  const openEquipment = (floor) => {
+    dispatch(fetchSeats(floor.id));
+    setEquipmentFor(floor);
+    setEquipmentDraft({
+      ...EMPTY_EQUIPMENT,
+      building_id: selectedBuildingId,
+      floor_id: floor.id,
+    });
+  };
+
+  /** Register the drafted unit on the floor the dialog was opened from. */
+  const addEquipment = async () => {
+    setSaving(true);
+    const result = await dispatch(createAsset(equipmentPayload(equipmentDraft)));
+    setSaving(false);
+    if (report(result, 'Equipment registered')) {
+      setEquipmentFor(null);
+      setEquipmentDraft(EMPTY_EQUIPMENT);
+      dispatch(fetchAssets({ building_id: selectedBuildingId, limit: 500 }));
+    }
   };
 
   /** Create a building from the draft form. */
@@ -309,6 +348,10 @@ export default function FacilitiesPage() {
                         <Chip
                           key={seat.id}
                           label={seat.code}
+                          // A floor now carries both seats and equipment, and
+                          // MUI's delete icon has no accessible name of its
+                          // own, so each chip says what it would remove.
+                          deleteIcon={<CancelIcon titleAccess={`Delete seat ${seat.code}`} />}
                           onDelete={
                             isAdmin
                               ? () =>
@@ -325,6 +368,45 @@ export default function FacilitiesPage() {
                         </Typography>
                       ) : null}
                     </Stack>
+                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                      Equipment
+                    </Typography>
+                    <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1, mt: 1, mb: 2 }}>
+                      {assets
+                        .filter((asset) => asset.floor_id === floor.id)
+                        .map((asset) => (
+                          <Chip
+                            key={asset.id}
+                            // The service state travels with the unit wherever
+                            // it is shown, so the estate view answers "what
+                            // needs attention?" without a second screen.
+                            color={asset.service_status === 'overdue' ? 'warning' : 'default'}
+                            variant={asset.service_status === 'overdue' ? 'outlined' : 'filled'}
+                            label={`${asset.code} · ${asset.seat_code ?? 'floor'} · ${serviceLabel(asset)}`}
+                            deleteIcon={<CancelIcon titleAccess={`Delete equipment ${asset.code}`} />}
+                            onDelete={
+                              isAdmin
+                                ? () =>
+                                    confirmDelete(`equipment ${asset.code}`, () =>
+                                      dispatch(deleteAsset(asset.id)),
+                                    )
+                                : undefined
+                            }
+                          />
+                        ))}
+                      {assets.filter((asset) => asset.floor_id === floor.id).length === 0 ? (
+                        <Typography variant="body2" color="text.secondary">
+                          No equipment registered on this floor.
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                    {isAdmin ? (
+                      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+                        <Button startIcon={<AddIcon />} onClick={() => openEquipment(floor)}>
+                          Add equipment
+                        </Button>
+                      </Stack>
+                    ) : null}
                     {isAdmin ? (
                       <Stack direction="row" spacing={1}>
                         <TextField
@@ -361,6 +443,24 @@ export default function FacilitiesPage() {
           )}
         </Grid>
       </Grid>
+
+      <EquipmentDialog
+        open={Boolean(equipmentFor)}
+        title="Register equipment"
+        draft={equipmentDraft}
+        onChange={setEquipmentDraft}
+        onSubmit={addEquipment}
+        onClose={() => setEquipmentFor(null)}
+        fieldErrors={fieldErrors}
+        saving={saving}
+        seats={equipmentFor ? seatsByFloor[equipmentFor.id] ?? [] : []}
+        lockLocation
+        locationLabel={
+          equipmentFor
+            ? `${buildings.find((building) => building.id === selectedBuildingId)?.name ?? ''} · Level ${equipmentFor.level}`
+            : ''
+        }
+      />
     </Box>
   );
 }

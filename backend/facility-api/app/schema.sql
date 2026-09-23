@@ -47,6 +47,34 @@ CREATE TABLE IF NOT EXISTS engineer_profiles (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Physical equipment: one row per unit, not per kind of thing. A "projector"
+-- teaches nothing; "the projector in 3A, installed March 2023" is what lets a
+-- recurring fault be traced to a unit worth replacing rather than repairing.
+CREATE TABLE IF NOT EXISTS assets (
+    id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    code                 TEXT        NOT NULL UNIQUE,
+    name                 TEXT        NOT NULL,
+    asset_type           TEXT        NOT NULL,
+    manufacturer         TEXT,
+    model                TEXT,
+    building_id          BIGINT      REFERENCES buildings (id) ON DELETE SET NULL,
+    floor_id             BIGINT      REFERENCES floors (id) ON DELETE SET NULL,
+    seat_id              BIGINT      REFERENCES seats (id) ON DELETE SET NULL,
+    -- The clock every reliability figure is measured from. Without it an asset
+    -- with three failures cannot be told apart from one installed last week.
+    installed_on         DATE,
+    -- Two different clocks, and they answer different questions. The expected
+    -- life says when a unit should be replaced; the service interval says how
+    -- often it needs attention in the meantime, which is the one that comes
+    -- round again after every visit.
+    expected_life_months INTEGER     CHECK (expected_life_months > 0),
+    service_interval_months INTEGER  CHECK (service_interval_months > 0),
+    last_serviced_on     DATE,
+    retired_on           DATE,
+    notes                TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS incidents (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     title           TEXT        NOT NULL,
@@ -120,6 +148,10 @@ CREATE TABLE IF NOT EXISTS notification_events (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Added rather than declared inline, because every deployed database already
+-- has an `incidents` table and this file is re-applied to it on cold start.
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS asset_id BIGINT REFERENCES assets (id) ON DELETE SET NULL;
+
 -- Indexes supporting the dashboard aggregations and the list filters.
 CREATE INDEX IF NOT EXISTS idx_incidents_status      ON incidents (status);
 CREATE INDEX IF NOT EXISTS idx_incidents_priority    ON incidents (priority);
@@ -128,6 +160,10 @@ CREATE INDEX IF NOT EXISTS idx_incidents_reporter    ON incidents (reporter_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_assignee    ON incidents (assignee_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_building    ON incidents (building_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_created_at  ON incidents (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_asset       ON incidents (asset_id);
+CREATE INDEX IF NOT EXISTS idx_assets_type           ON assets (asset_type);
+CREATE INDEX IF NOT EXISTS idx_assets_building       ON assets (building_id);
+CREATE INDEX IF NOT EXISTS idx_assets_seat           ON assets (seat_id);
 CREATE INDEX IF NOT EXISTS idx_notes_incident        ON incident_notes (incident_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_events_pending

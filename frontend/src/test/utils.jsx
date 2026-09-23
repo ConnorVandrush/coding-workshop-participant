@@ -20,6 +20,7 @@ import dashboardReducer from '../store/dashboardSlice';
 import engineersReducer from '../store/engineersSlice';
 import facilitiesReducer from '../store/facilitiesSlice';
 import incidentsReducer from '../store/incidentsSlice';
+import maintenanceReducer from '../store/maintenanceSlice';
 import notificationsReducer from '../store/notificationsSlice';
 import uiReducer from '../store/uiSlice';
 import theme from '../theme';
@@ -123,6 +124,7 @@ export function renderPage(ui, { user = ADMIN, route = '/', path = '*', preloade
       facilities: facilitiesReducer,
       engineers: engineersReducer,
       dashboard: dashboardReducer,
+      maintenance: maintenanceReducer,
       notifications: notificationsReducer,
       ui: uiReducer,
     },

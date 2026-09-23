@@ -27,6 +27,8 @@ import Typography from '@mui/material/Typography';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import ConfirmationNumberIcon from '@mui/icons-material/ConfirmationNumber';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import BuildIcon from '@mui/icons-material/Build';
+import DevicesOtherIcon from '@mui/icons-material/DevicesOther';
 import EngineeringIcon from '@mui/icons-material/Engineering';
 import GroupIcon from '@mui/icons-material/Group';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -50,6 +52,12 @@ const NAV_ITEMS = [
   { to: '/incidents', label: 'Incidents', icon: ConfirmationNumberIcon, roles: [] },
   { to: '/facilities', label: 'Facilities', icon: ApartmentIcon, roles: [] },
   { to: '/engineers', label: 'Engineers', icon: EngineeringIcon, roles: [] },
+  // The register sits next to the facilities it is placed in. Employees pick a
+  // unit when reporting, but browsing the estate's equipment is staff work.
+  { to: '/equipment', label: 'Equipment', icon: DevicesOtherIcon, roles: ['facility_admin', 'engineer'] },
+  // Replacement decisions are staff work too, and an employee's incident
+  // visibility is too narrow for the figures to mean anything to them.
+  { to: '/maintenance', label: 'Maintenance', icon: BuildIcon, roles: ['facility_admin', 'engineer'] },
   { to: '/users', label: 'Accounts', icon: GroupIcon, roles: ['facility_admin'] },
 ];
 

@@ -11,6 +11,7 @@ import dashboardReducer from './dashboardSlice';
 import engineersReducer from './engineersSlice';
 import facilitiesReducer from './facilitiesSlice';
 import incidentsReducer from './incidentsSlice';
+import maintenanceReducer from './maintenanceSlice';
 import notificationsReducer from './notificationsSlice';
 import uiReducer from './uiSlice';
 
@@ -21,6 +22,7 @@ const store = configureStore({
     facilities: facilitiesReducer,
     engineers: engineersReducer,
     dashboard: dashboardReducer,
+    maintenance: maintenanceReducer,
     notifications: notificationsReducer,
     ui: uiReducer,
   },

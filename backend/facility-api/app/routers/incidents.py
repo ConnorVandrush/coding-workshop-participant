@@ -4,8 +4,9 @@ Incidents: the core of the platform.
 Visibility rules applied to every read in this module:
 
 * ``employee``       - only incidents they reported.
-* ``engineer``       - incidents assigned to them, plus unassigned ones so they
-                       can pick work up.
+* ``engineer``       - incidents assigned to them, plus the rest of the history
+                       of any unit they are working on, which is what a
+                       recurring fault looks like from the inside.
 * ``facility_admin`` - everything.
 
 Write rules are enforced per endpoint and documented above each route.
@@ -58,6 +59,8 @@ _INCIDENT_SELECT = """
            i.building_id, b.name AS building_name,
            i.floor_id, f.level AS floor_level,
            i.seat_id, s.code AS seat_code,
+           i.asset_id, ast.code AS asset_code, ast.name AS asset_name,
+           ast.asset_type AS asset_type,
            (SELECT COUNT(*) FROM incident_notes n WHERE n.incident_id = i.id)::int AS note_count
     FROM incidents i
     JOIN users ru ON ru.id = i.reporter_id
@@ -66,6 +69,7 @@ _INCIDENT_SELECT = """
     LEFT JOIN buildings b ON b.id = i.building_id
     LEFT JOIN floors f ON f.id = i.floor_id
     LEFT JOIN seats s ON s.id = i.seat_id
+    LEFT JOIN assets ast ON ast.id = i.asset_id
 """
 
 _SORTABLE = {
@@ -120,6 +124,16 @@ def _serialise(row: dict[str, Any]) -> dict[str, Any]:
             "seat_id": row["seat_id"],
             "seat_code": row["seat_code"],
         },
+        "asset": (
+            {
+                "id": row["asset_id"],
+                "code": row["asset_code"],
+                "name": row["asset_name"],
+                "asset_type": row["asset_type"],
+            }
+            if row.get("asset_id")
+            else None
+        ),
         "note_count": row["note_count"],
         "allowed_transitions": list(TRANSITIONS.get(IncidentStatus(row["status"]), ())),
         "created_at": row["created_at"],
@@ -146,9 +160,22 @@ def visibility_clause(user: dict[str, Any]) -> tuple[str, list[Any]]:
     if user["role"] == Role.ENGINEER:
         profile_id = engineer_profile_id(user)
         if profile_id is None:
-            # Engineer without a profile yet: only unassigned work is visible.
-            return "i.assignee_id IS NULL", []
-        return "(i.assignee_id = %s OR i.assignee_id IS NULL)", [profile_id]
+            # No profile yet, so nothing is assigned and nothing is visible.
+            # Engineers used to see unassigned work here so they could pick it
+            # up; they cannot assign at all now, so that view showed them a
+            # backlog they had no way to act on.
+            return "FALSE", []
+        # Their own work, plus the rest of the history of any unit they are
+        # working on. Diagnosis is the reason: an engineer sent to a projector
+        # needs to know it has failed three times this quarter, and that
+        # history is mostly other people's tickets. The widening is confined to
+        # equipment they already hold work for - it does not open the estate.
+        return (
+            "(i.assignee_id = %s OR i.asset_id IN ("
+            " SELECT a.asset_id FROM incidents a"
+            " WHERE a.assignee_id = %s AND a.asset_id IS NOT NULL))"
+        ), [profile_id, profile_id]
+    # Employees see what they reported, and nothing else.
     return "i.reporter_id = %s", [user["id"]]
 
 
@@ -206,6 +233,24 @@ def _validate_location(building_id: Optional[int], floor_id: Optional[int], seat
             raise ApiError(400, "validation_error", "Seat does not belong to the supplied floor")
 
 
+def _validate_asset(asset_id: Optional[int]) -> None:
+    """
+    Check that a referenced asset exists.
+
+    The asset is not required to sit at the incident's location: equipment is
+    moved, and refusing the link would leave the failure unattributed, which is
+    the one outcome the register exists to prevent.
+
+    Args:
+        asset_id: Optional asset reference.
+
+    Raises:
+        ApiError: 400 when the asset is unknown.
+    """
+    if asset_id is not None and fetch_one("SELECT id FROM assets WHERE id = %s", (asset_id,)) is None:
+        raise ApiError(400, "validation_error", f"Asset {asset_id} does not exist")
+
+
 def _may_work_on(incident: dict[str, Any], user: dict[str, Any]) -> bool:
     """
     Report whether the caller may drive an incident's workflow.
@@ -246,6 +291,7 @@ async def list_incidents(
     building_id: Optional[int] = Query(default=None),
     floor_id: Optional[int] = Query(default=None),
     seat_id: Optional[int] = Query(default=None),
+    asset_id: Optional[int] = Query(default=None, description="Incidents raised against one unit"),
     assignee_id: Optional[int] = Query(default=None, description="Engineer profile id"),
     reporter_id: Optional[int] = Query(default=None, description="Reporting user id"),
     is_escalated: Optional[bool] = Query(default=None),
@@ -267,6 +313,7 @@ async def list_incidents(
         building_id: Restrict to a building.
         floor_id: Restrict to a floor.
         seat_id: Restrict to a seat.
+        asset_id: Restrict to one unit of equipment.
         assignee_id: Restrict to an engineer profile.
         reporter_id: Restrict to a reporting user.
         is_escalated: Restrict to escalated or non-escalated incidents.
@@ -290,6 +337,7 @@ async def list_incidents(
         ("i.building_id = %s", building_id),
         ("i.floor_id = %s", floor_id),
         ("i.seat_id = %s", seat_id),
+        ("i.asset_id = %s", asset_id),
         ("i.assignee_id = %s", assignee_id),
         ("i.reporter_id = %s", reporter_id),
         ("i.is_escalated = %s", is_escalated),
@@ -352,13 +400,14 @@ async def create_incident(payload: IncidentCreate, user: dict[str, Any] = _ANY_U
         dict: The created incident.
     """
     _validate_location(payload.building_id, payload.floor_id, payload.seat_id)
+    _validate_asset(payload.asset_id)
 
     created = fetch_one(
         """
         INSERT INTO incidents
             (title, description, category, priority, reporter_id,
-             building_id, floor_id, seat_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             building_id, floor_id, seat_id, asset_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -370,6 +419,7 @@ async def create_incident(payload: IncidentCreate, user: dict[str, Any] = _ANY_U
             payload.building_id,
             payload.floor_id,
             payload.seat_id,
+            payload.asset_id,
         ),
     )
     return _serialise(_load_incident(int((created or {})["id"]), user))
@@ -519,6 +569,8 @@ async def update_incident(
         fields.get("floor_id", incident["floor_id"]),
         fields.get("seat_id", incident["seat_id"]),
     )
+    if "asset_id" in fields:
+        _validate_asset(fields["asset_id"])
 
     values = {key: (value.value if hasattr(value, "value") else value) for key, value in fields.items()}
     assignments = ", ".join(f"{column} = %s" for column in values)
@@ -624,9 +676,15 @@ async def assign_incident(
         cur.execute(
             """
             UPDATE incidents
-            SET assignee_id = %s,
-                assigned_at = CASE WHEN %s IS NULL THEN NULL ELSE NOW() END,
-                acknowledged_at = COALESCE(acknowledged_at, CASE WHEN %s IS NULL THEN NULL ELSE NOW() END),
+            SET assignee_id = %s::bigint,
+                -- Cast explicitly: a bare parameter compared only against NULL
+                -- gives PostgreSQL nothing to infer a type from, and unassigning
+                -- (`engineer_id: null`) sends exactly that. Without the cast the
+                -- documented way to unassign answers 500.
+                assigned_at = CASE WHEN %s::bigint IS NULL THEN NULL ELSE NOW() END,
+                acknowledged_at = COALESCE(
+                    acknowledged_at, CASE WHEN %s::bigint IS NULL THEN NULL ELSE NOW() END
+                ),
                 updated_at = NOW()
             WHERE id = %s
             """,

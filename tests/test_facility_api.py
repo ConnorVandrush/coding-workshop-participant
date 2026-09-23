@@ -276,15 +276,66 @@ def test_assignment_records_acknowledgement(client, world, incident):
     assert body["assigned_at"] and body["acknowledged_at"]
 
 
+def test_an_incident_can_be_unassigned(client, world, incident):
+    """
+    `engineer_id: null` is the documented way to hand work back.
+
+    It answered 500 until the parameters in the update were cast: compared only
+    against NULL, PostgreSQL had nothing to infer their type from, and nothing
+    had exercised the unassign path.
+    """
+    admin_h = world["admin_h"]
+    client.post(
+        f"/incidents/{incident['id']}/assign",
+        json={"engineer_id": world["engineer"]["id"]},
+        headers=admin_h,
+    )
+    response = client.post(f"/incidents/{incident['id']}/assign", json={"engineer_id": None}, headers=admin_h)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assignee"] is None
+    assert body["assigned_at"] is None
+    # Acknowledgement is not undone: it happened, whoever holds the work now.
+    assert body["acknowledged_at"] is not None
+
+
 def test_engineers_cannot_assign_incidents(client, world, incident):
-    """Assignment belongs to facility admins, including self-assignment."""
+    """
+    Assignment belongs to facility admins, including self-assignment.
+
+    An unassigned incident is now outside an engineer's visibility, so the
+    refusal arrives as a 404 rather than a 403 - deliberately, because a 403
+    would confirm that an incident with that id exists.
+    """
     response = client.post(
         f"/incidents/{incident['id']}/assign",
         json={"engineer_id": world["engineer"]["id"]},
         headers=world["engineer_h"],
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
     assert client.get(f"/incidents/{incident['id']}", headers=world["admin_h"]).json()["assignee"] is None
+
+
+def test_engineers_cannot_reassign_their_own_work(client, world, incident):
+    """The rule itself, on an incident the engineer can see: refused, 403."""
+    admin_h = world["admin_h"]
+    client.post(
+        f"/incidents/{incident['id']}/assign",
+        json={"engineer_id": world["engineer"]["id"]},
+        headers=admin_h,
+    )
+    response = client.post(
+        f"/incidents/{incident['id']}/assign",
+        json={"engineer_id": None},
+        headers=world["engineer_h"],
+    )
+    assert response.status_code == 403
+    # Left as the admin set it.
+    assert client.get(f"/incidents/{incident['id']}", headers=admin_h).json()["assignee"] is not None
+
+    # Released again: the shared engineer profile caps active work at two, and
+    # a test that keeps an assignment makes a later one fail on capacity.
+    client.post(f"/incidents/{incident['id']}/assign", json={"engineer_id": None}, headers=admin_h)
 
 
 def test_employees_cannot_assign_incidents(client, world, incident):

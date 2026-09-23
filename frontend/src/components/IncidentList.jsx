@@ -79,6 +79,11 @@ export default function IncidentList({ incidents, onSelect }) {
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {humanise(incident.category)} · {locationLabel(incident.location)}
                 </Typography>
+                {incident.asset ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {incident.asset.code} — {incident.asset.name}
+                  </Typography>
+                ) : null}
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                   {incident.assignee ? `Assigned to ${incident.assignee.full_name}` : 'Unassigned'}
                   {' · '}
@@ -101,6 +106,7 @@ export default function IncidentList({ incidents, onSelect }) {
             <TableCell>Title</TableCell>
             <TableCell>Category</TableCell>
             <TableCell>Location</TableCell>
+            <TableCell>Equipment</TableCell>
             <TableCell>Status</TableCell>
             <TableCell>Priority</TableCell>
             <TableCell>Assignee</TableCell>
@@ -126,6 +132,18 @@ export default function IncidentList({ incidents, onSelect }) {
               </TableCell>
               <TableCell>{humanise(incident.category)}</TableCell>
               <TableCell>{locationLabel(incident.location)}</TableCell>
+              <TableCell>
+                {incident.asset ? (
+                  // The tag alone: the full name is on the detail view, and a
+                  // second long string here pushes the workflow columns off a
+                  // laptop screen.
+                  <Typography variant="body2" noWrap title={incident.asset.name}>
+                    {incident.asset.code}
+                  </Typography>
+                ) : (
+                  '—'
+                )}
+              </TableCell>
               <TableCell>
                 <StatusChip status={incident.status} />
               </TableCell>

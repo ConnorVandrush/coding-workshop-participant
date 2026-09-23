@@ -34,6 +34,21 @@ describe('navigation', () => {
     });
   });
 
+  it.each([['facility admin', ADMIN], ['engineer', ENGINEER]])(
+    'shows Equipment and Maintenance to a %s',
+    (_name, user) => {
+      renderShell(user);
+      expect(screen.getByRole('link', { name: 'Equipment' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Maintenance' })).toBeInTheDocument();
+    },
+  );
+
+  it('hides both from an employee, whose incident view is too narrow to read them', () => {
+    renderShell(EMPLOYEE);
+    expect(screen.queryByRole('link', { name: 'Equipment' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Maintenance' })).not.toBeInTheDocument();
+  });
+
   it('shows Accounts to a facility admin only', () => {
     renderShell(ADMIN);
     expect(screen.getByRole('link', { name: 'Accounts' })).toBeInTheDocument();

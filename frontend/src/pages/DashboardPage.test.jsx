@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DashboardPage from './DashboardPage';
-import { ADMIN, EMPLOYEE, mockApi, renderPage } from '../test/utils';
+import { ADMIN, EMPLOYEE, ENGINEER, mockApi, renderPage } from '../test/utils';
 
 const summary = (scope, overrides = {}) => ({
   scope,
@@ -24,12 +24,6 @@ const summary = (scope, overrides = {}) => ({
   by_category: [{ key: 'HVAC', count: 3 }, { key: 'AV_EQUIPMENT', count: 2 }],
   ...overrides,
 });
-
-const hotspots = {
-  buildings: [{ id: 1, label: 'HQ North', count: 14, open_count: 10 }],
-  floors: [{ id: 3, label: 'HQ North - Level 3', count: 6, open_count: 5 }],
-  seats: [{ id: 7, label: 'HQ North - Level 3 - 3A-12', count: 2, open_count: 2 }],
-};
 
 const sla = {
   acknowledged_hours_avg: 1.8, assigned_hours_avg: 2.4,
@@ -52,7 +46,7 @@ const workflow = {
 };
 
 /**
- * Stub the five endpoints the dashboard loads.
+ * Stub the four endpoints the dashboard loads.
  *
  * @param {string} scope Role the API should report as the scope.
  * @param {boolean} includeWorkload Whether the workload endpoint answers.
@@ -60,7 +54,6 @@ const workflow = {
  */
 const api = (scope, includeWorkload = true) => mockApi({
   'GET /dashboard/summary': summary(scope),
-  'GET /dashboard/hotspots': hotspots,
   'GET /dashboard/sla': sla,
   'GET /dashboard/engineers': includeWorkload
     ? workload
@@ -103,6 +96,14 @@ describe('headline figures', () => {
     expect(within(statTile('Unassigned')).getByText('7')).toBeInTheDocument();
   });
 
+  it('tells an engineer what their figures are scoped to', async () => {
+    api('engineer');
+    renderPage(<DashboardPage />, { user: ENGINEER });
+    expect(
+      await screen.findByText('Incidents assigned to you, plus other faults on equipment you are working on.'),
+    ).toBeInTheDocument();
+  });
+
   it('describes an employee scope differently', async () => {
     api('employee', false);
     renderPage(<DashboardPage />, { user: EMPLOYEE });
@@ -126,12 +127,11 @@ describe('breakdowns and panels', () => {
     expect(screen.getByText(/1 transitions defined/)).toBeInTheDocument();
   });
 
-  it('ranks hotspots and keeps the full label available on hover', async () => {
+  it('no longer carries the hotspots, which moved to the maintenance screen', async () => {
     api('facility_admin');
     renderPage(<DashboardPage />);
-    const seat = await screen.findByText('HQ North - Level 3 - 3A-12');
-    // Long seat labels truncate visually, so the full text must stay reachable.
-    expect(seat).toHaveAttribute('title', 'HQ North - Level 3 - 3A-12');
+    await screen.findByText('Ticket workflow');
+    expect(screen.queryByText('Recurring issue hotspots')).not.toBeInTheDocument();
   });
 
   it('shows an em dash for a response time the API could not compute', async () => {
@@ -185,8 +185,7 @@ describe('failure', () => {
   it('surfaces an error instead of rendering an empty dashboard', async () => {
     mockApi({
       'GET /dashboard/summary': { status: 500, body: { error: { status: 500, type: 'internal_error', message: 'Database unavailable', details: null } } },
-      'GET /dashboard/hotspots': hotspots,
-      'GET /dashboard/sla': sla,
+          'GET /dashboard/sla': sla,
       'GET /workflow': workflow,
     });
     renderPage(<DashboardPage />);

@@ -7,7 +7,7 @@ validation and the generated OpenAPI schema at ``/docs``.
 """
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -199,6 +199,158 @@ class SeatResponse(ApiModel):
 
 
 # --------------------------------------------------------------------------
+# Assets
+# --------------------------------------------------------------------------
+class AssetCreate(ApiModel):
+    """A physical unit of equipment placed somewhere in the estate."""
+
+    code: NonEmptyStr
+    name: NonEmptyStr
+    asset_type: NonEmptyStr
+    manufacturer: Optional[Annotated[str, Field(max_length=255)]] = None
+    model: Optional[Annotated[str, Field(max_length=255)]] = None
+    building_id: Optional[int] = None
+    floor_id: Optional[int] = None
+    seat_id: Optional[int] = None
+    installed_on: Optional[date] = None
+    expected_life_months: Optional[Annotated[int, Field(ge=1, le=1200)]] = None
+    service_interval_months: Optional[Annotated[int, Field(ge=1, le=600)]] = None
+    last_serviced_on: Optional[date] = None
+    retired_on: Optional[date] = None
+    notes: Optional[Annotated[str, Field(max_length=2000)]] = None
+
+
+class AssetUpdate(ApiModel):
+    """Partial asset update; omitted fields are left untouched."""
+
+    code: Optional[NonEmptyStr] = None
+    name: Optional[NonEmptyStr] = None
+    asset_type: Optional[NonEmptyStr] = None
+    manufacturer: Optional[Annotated[str, Field(max_length=255)]] = None
+    model: Optional[Annotated[str, Field(max_length=255)]] = None
+    building_id: Optional[int] = None
+    floor_id: Optional[int] = None
+    seat_id: Optional[int] = None
+    installed_on: Optional[date] = None
+    expected_life_months: Optional[Annotated[int, Field(ge=1, le=1200)]] = None
+    service_interval_months: Optional[Annotated[int, Field(ge=1, le=600)]] = None
+    last_serviced_on: Optional[date] = None
+    retired_on: Optional[date] = None
+    notes: Optional[Annotated[str, Field(max_length=2000)]] = None
+
+
+class AssetResponse(ApiModel):
+    """Asset record, denormalised with its location and failure history."""
+
+    id: int
+    code: str
+    name: str
+    asset_type: str
+    manufacturer: Optional[str] = None
+    model: Optional[str] = None
+    building_id: Optional[int] = None
+    building_name: Optional[str] = None
+    floor_id: Optional[int] = None
+    floor_level: Optional[int] = None
+    seat_id: Optional[int] = None
+    seat_code: Optional[str] = None
+    installed_on: Optional[date] = None
+    expected_life_months: Optional[int] = None
+    service_interval_months: Optional[int] = None
+    last_serviced_on: Optional[date] = None
+    next_service_due: Optional[date] = None
+    # unknown | ok | due_soon | overdue. `unknown` means no interval was set,
+    # which is a gap in the register rather than a healthy unit.
+    service_status: str = "unknown"
+    days_until_service: Optional[int] = None
+    retired_on: Optional[date] = None
+    is_retired: bool = False
+    notes: Optional[str] = None
+    incident_count: int = 0
+    open_incident_count: int = 0
+    last_incident_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class AssetServiceRecord(ApiModel):
+    """Record that a unit was serviced, which restarts its interval."""
+
+    serviced_on: Optional[date] = None
+    note: Optional[Annotated[str, Field(max_length=2000)]] = None
+
+
+class AssetRef(ApiModel):
+    """Compact asset reference embedded in incident payloads."""
+
+    id: int
+    code: str
+    name: str
+    asset_type: str
+
+
+# --------------------------------------------------------------------------
+# Maintenance
+# --------------------------------------------------------------------------
+class MaintenanceSummary(ApiModel):
+    """Headline figures for the maintenance screen."""
+
+    assets_tracked: int = 0
+    assets_retired: int = 0
+    assets_needing_review: int = 0
+    assets_past_expected_life: int = 0
+    assets_service_overdue: int = 0
+    assets_service_due_soon: int = 0
+    assets_without_service_interval: int = 0
+    incidents_total: int = 0
+    incidents_linked: int = 0
+    # Everything else on this screen is only as good as this number: an
+    # unlinked incident is invisible to every per-unit figure below.
+    linked_percent: float = 0.0
+
+
+class AssetReview(ApiModel):
+    """One asset ranked for replacement, with the reasons it was flagged."""
+
+    id: int
+    code: str
+    name: str
+    asset_type: str
+    location: str
+    installed_on: Optional[date] = None
+    age_years: Optional[float] = None
+    incident_count: int = 0
+    open_incident_count: int = 0
+    recent_incident_count: int = 0
+    last_incident_at: Optional[datetime] = None
+    days_between_failures: Optional[float] = None
+    type_median_incidents: Optional[float] = None
+    next_service_due: Optional[date] = None
+    service_status: str = "unknown"
+    days_until_service: Optional[int] = None
+    needs_review: bool = False
+    reasons: list[str] = Field(default_factory=list)
+
+
+class AssetReviewPage(ApiModel):
+    """Assets ranked for review, worst first."""
+
+    window_days: int
+    items: list[AssetReview] = Field(default_factory=list)
+
+
+class AssetTypeReliability(ApiModel):
+    """Aggregate reliability of one class of equipment."""
+
+    asset_type: str
+    asset_count: int = 0
+    incident_count: int = 0
+    open_incident_count: int = 0
+    incidents_per_asset: float = 0.0
+    review_count: int = 0
+    avg_age_years: Optional[float] = None
+
+
+# --------------------------------------------------------------------------
 # Engineers
 # --------------------------------------------------------------------------
 class EngineerCreate(ApiModel):
@@ -254,6 +406,7 @@ class IncidentCreate(ApiModel):
     building_id: Optional[int] = None
     floor_id: Optional[int] = None
     seat_id: Optional[int] = None
+    asset_id: Optional[int] = None
 
 
 class IncidentUpdate(ApiModel):
@@ -271,6 +424,7 @@ class IncidentUpdate(ApiModel):
     building_id: Optional[int] = None
     floor_id: Optional[int] = None
     seat_id: Optional[int] = None
+    asset_id: Optional[int] = None
 
 
 class IncidentAssign(ApiModel):
@@ -337,6 +491,7 @@ class IncidentResponse(ApiModel):
     reporter: IncidentPerson
     assignee: Optional[IncidentPerson] = None
     location: IncidentLocation
+    asset: Optional[AssetRef] = None
     note_count: int = 0
     allowed_transitions: list[IncidentStatus] = Field(default_factory=list)
     created_at: datetime
