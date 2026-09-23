@@ -36,6 +36,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
 import Notifier from './Notifier';
+import OfflineBanner from './OfflineBanner';
 import { logout, selectUser } from '../store/authSlice';
 import { selectDrawerOpen, setDrawerOpen } from '../store/uiSlice';
 import { ROLE_LABELS } from '../theme';
@@ -192,6 +193,7 @@ export default function AppLayout({ children }) {
         }}
       >
         <Toolbar />
+        <OfflineBanner />
         {children}
         <Notifier />
       </Box>

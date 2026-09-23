@@ -86,6 +86,34 @@ cache behaviour forwards to the Lambda with the prefix intact; locally it is the
 dev proxy on port 3001, which strips the same prefix. Both are written into
 `.env.local` by `./bin/generate-env.sh`.
 
+## Progressive web app
+
+The app is installable and opens without a network. `vite-plugin-pwa` generates
+the manifest and a Workbox service worker from the build output; icons live in
+`public/` at 192px, 512px and a maskable 512px so a platform that crops to a
+circle does not clip the mark.
+
+**The API is deliberately never cached.** Incident data is live and per-user: a
+cached response would show one person another's view, or stale state presented
+as current. `runtimeCaching` is empty, so API requests reach the network or
+fail honestly, and the existing error handling reports that.
+
+Two details that matter more than they look:
+
+* `navigateFallbackDenylist: [/^\/api\//]`. Without it a failed API call would
+  be answered with the HTML shell, and the client would try to parse markup as
+  JSON — a confusing failure a long way from its cause.
+* `devOptions.enabled: false`. A service worker caching a dev bundle is a
+  reliable way to spend an afternoon debugging a stale page.
+
+Offline, the shell loads from the precache and `OfflineBanner` says plainly
+that nothing will update until the connection returns, rather than letting
+every request fail one at a time into a toast.
+
+`e2e/pwa.spec.js` checks the manifest is installable, that the service worker
+registers and precaches the shell without any `/api/` entry, and that the app
+still opens with the browser set offline.
+
 ## Keeping data current
 
 The dashboard, the incident list and the incident detail view refresh
