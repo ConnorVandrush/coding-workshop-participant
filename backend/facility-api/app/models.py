@@ -74,12 +74,25 @@ class LoginRequest(ApiModel):
 
 
 class TokenResponse(ApiModel):
-    """Issued access token plus the authenticated profile."""
+    """
+    An issued session.
+
+    The access token is short-lived and is only a signature, so it cannot be
+    revoked; the refresh token is the long-lived credential and lives in a
+    table, so it can be.
+    """
 
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
     user: "UserResponse"
+
+
+class RefreshRequest(ApiModel):
+    """Exchange a refresh token for a new session."""
+
+    refresh_token: Annotated[str, Field(min_length=10, max_length=512)]
 
 
 class UserResponse(ApiModel):

@@ -9,7 +9,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request, toQuery } from '../services/api';
-import { errorMessage, rejectValue } from './thunkUtils';
+import { errorMessage, withAuth } from './thunkUtils';
 
 /** Filter values meaning "show everything". */
 export const DEFAULT_FILTERS = {
@@ -34,12 +34,8 @@ const PAGE_SIZE = 25;
  * @param {object} thunkApi Redux Toolkit thunk API.
  * @returns {Promise<*>} The resolved payload or a rejection with a message.
  */
-async function withToken(body, { getState, rejectWithValue }) {
-  try {
-    return await body(getState().auth.token);
-  } catch (error) {
-    return rejectWithValue(rejectValue(error));
-  }
+async function withToken(body, thunkApi) {
+  return withAuth(thunkApi, body);
 }
 
 /** Load a page of incidents using the filters currently in the store. */

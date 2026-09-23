@@ -10,14 +10,23 @@ into the codebase. Every subsequent self-service registration is an
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 
 from app.config import ACCESS_TOKEN_TTL_MINUTES
 from app.database import fetch_one
 from app.domain import Role
 from app.errors import ApiError
-from app.models import LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from app.security import create_access_token, get_current_user, hash_password, verify_password
+from app.models import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UserResponse
+from app.security import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    issue_refresh_token,
+    revoke_all_for_user,
+    revoke_refresh_token,
+    rotate_refresh_token,
+    verify_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -112,6 +121,7 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     profile = {key: user[key] for key in ("id", "email", "full_name", "role", "is_active", "created_at")}
     return {
         "access_token": token,
+        "refresh_token": issue_refresh_token(user["id"]),
         "token_type": "bearer",  # nosec B105 # an OAuth token type label, not a secret
         "expires_in": expires_in,
         "user": profile,
@@ -141,3 +151,79 @@ async def me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]
 # Exposed so the frontend can show a session-expiry countdown without decoding
 # the token itself.
 TOKEN_TTL_MINUTES = ACCESS_TOKEN_TTL_MINUTES
+
+
+# POST /auth/refresh
+# Request body: {"refresh_token": "Xy9..."}
+# Response 200: a fresh session, same shape as POST /auth/login. The refresh
+#   token in the response replaces the one sent: each is valid exactly once.
+# Response 401: invalid_token | token_expired | token_reused
+# Response 403: account_disabled
+@router.post("/refresh", response_model=TokenResponse, summary="Exchange a refresh token")
+async def refresh(payload: RefreshRequest) -> dict[str, Any]:
+    """
+    Issue a new access token, rotating the refresh token that bought it.
+
+    Rotation means every refresh token is valid exactly once. Presenting a
+    spent one implies two parties hold it, so the whole session is revoked
+    rather than guessing which party is legitimate.
+
+    Args:
+        payload: The refresh token to exchange.
+
+    Returns:
+        dict: A new access token, a new refresh token and the profile.
+
+    Raises:
+        ApiError: 401 when the token is unknown, expired or already spent;
+            403 when the account has since been deactivated.
+    """
+    user, new_refresh = rotate_refresh_token(payload.refresh_token)
+    token, expires_in = create_access_token(user)
+    return {
+        "access_token": token,
+        "refresh_token": new_refresh,
+        "token_type": "bearer",  # nosec B105 # an OAuth token type label, not a secret
+        "expires_in": expires_in,
+        "user": user,
+    }
+
+
+# POST /auth/logout
+# Request body: {"refresh_token": "Xy9..."}
+# Response 204: empty body. Always succeeds, so signing out never fails.
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="End a session")
+async def logout(payload: RefreshRequest) -> Response:
+    """
+    Revoke a refresh token so the session cannot be resumed.
+
+    The access token is not revoked because it cannot be: it is a signature,
+    checked without touching the database. It simply expires, which is why its
+    lifetime is short.
+
+    Args:
+        payload: The refresh token to revoke.
+
+    Returns:
+        Response: An empty 204, whether or not the token was still live -
+        signing out should not report failure.
+    """
+    revoke_refresh_token(payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# POST /auth/logout-everywhere
+# Request:  header `Authorization: Bearer <token>`, no body.
+# Response 200: {"revoked": 3}
+@router.post("/logout-everywhere", summary="End every session for this account")
+async def logout_everywhere(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, int]:
+    """
+    Revoke every refresh token for the caller, on every device.
+
+    Args:
+        user: The authenticated caller.
+
+    Returns:
+        dict: How many sessions were ended.
+    """
+    return {"revoked": revoke_all_for_user(user["id"])}

@@ -37,7 +37,7 @@ import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import NotificationBell from './NotificationBell';
 import Notifier from './Notifier';
 import OfflineBanner from './OfflineBanner';
-import { logout, selectUser } from '../store/authSlice';
+import { selectUser, signOut } from '../store/authSlice';
 import { selectDrawerOpen, setDrawerOpen } from '../store/uiSlice';
 import { ROLE_LABELS } from '../theme';
 
@@ -73,8 +73,10 @@ export default function AppLayout({ children }) {
   );
 
   /** Sign out and return to the login screen. */
-  const handleLogout = () => {
-    dispatch(logout());
+  const handleLogout = async () => {
+    // Revokes the refresh token server-side, so the session cannot be resumed
+    // from a copy of it elsewhere.
+    await dispatch(signOut());
     navigate('/login', { replace: true });
   };
 

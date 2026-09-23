@@ -9,18 +9,20 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request } from '../services/api';
+import { refreshSession } from './session';
 import { errorMessage, rejectValue } from './thunkUtils';
 
 const TOKEN_KEY = 'acme.facility.token';
+const REFRESH_KEY = 'acme.facility.refresh';
 
 /**
  * Read the persisted token, tolerating browsers that block storage.
  *
  * @returns {string|null} The stored token, or null.
  */
-function readToken() {
+function readToken(key = TOKEN_KEY) {
   try {
-    return window.localStorage.getItem(TOKEN_KEY);
+    return window.localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -31,13 +33,32 @@ function readToken() {
  *
  * @param {string|null} token The token to store, or null to clear it.
  */
-function writeToken(token) {
+function writeToken(token, key = TOKEN_KEY) {
   try {
-    if (token) window.localStorage.setItem(TOKEN_KEY, token);
-    else window.localStorage.removeItem(TOKEN_KEY);
+    if (token) window.localStorage.setItem(key, token);
+    else window.localStorage.removeItem(key);
   } catch {
-    // Session simply will not survive a refresh; not worth failing over.
+    // Session simply will not survive a reload; not worth failing over.
   }
+}
+
+/**
+ * Store an issued session.
+ *
+ * The refresh token in a response replaces the one that bought it - each is
+ * valid exactly once - so failing to store the replacement would make the next
+ * renewal look like a replay and end the session.
+ *
+ * @param {object} state The auth slice state.
+ * @param {object} payload A login or refresh response.
+ */
+function adoptSession(state, payload) {
+  writeToken(payload.access_token);
+  writeToken(payload.refresh_token, REFRESH_KEY);
+  state.token = payload.access_token;
+  state.refreshToken = payload.refresh_token;
+  state.user = payload.user;
+  state.initialised = true;
 }
 
 /** Sign in and store the returned token. */
@@ -65,6 +86,24 @@ export const register = createAsyncThunk(
   },
 );
 
+/**
+ * End the session, revoking the refresh token so it cannot be resumed.
+ *
+ * The local state is cleared either way: a sign-out that fails because the
+ * network is down must still sign the user out of this browser.
+ */
+export const signOut = createAsyncThunk('auth/signOut', async (_, { getState, dispatch }) => {
+  const token = getState().auth.refreshToken;
+  if (token) {
+    try {
+      await request('/auth/logout', { method: 'POST', body: { refresh_token: token } });
+    } catch {
+      // Best effort: the token expires on its own soon enough.
+    }
+  }
+  dispatch(logout());
+});
+
 /** Validate a restored token by fetching the current profile. */
 export const loadSession = createAsyncThunk('auth/loadSession', async (_, { getState, rejectWithValue }) => {
   const { token } = getState().auth;
@@ -78,6 +117,7 @@ export const loadSession = createAsyncThunk('auth/loadSession', async (_, { getS
 
 const initialState = {
   token: readToken(),
+  refreshToken: readToken(REFRESH_KEY),
   user: null,
   status: 'idle',
   error: null,
@@ -91,7 +131,9 @@ const authSlice = createSlice({
     /** Clear the session and the persisted token. */
     logout(state) {
       writeToken(null);
+      writeToken(null, REFRESH_KEY);
       state.token = null;
+      state.refreshToken = null;
       state.user = null;
       state.status = 'idle';
       state.error = null;
@@ -109,9 +151,26 @@ const authSlice = createSlice({
         state.initialised = true;
       })
       .addCase(loadSession.rejected, (state) => {
-        // The stored token is expired or invalid: drop it silently.
+        // The stored access token is expired or invalid. The refresh token may
+        // still be good, so it is kept: the next request renews the session
+        // rather than dropping the user at the login screen.
         writeToken(null);
         state.token = null;
+        state.user = null;
+        state.initialised = true;
+      })
+      .addCase(refreshSession.fulfilled, (state, action) => {
+        adoptSession(state, action.payload);
+        state.status = 'succeeded';
+        state.error = null;
+      })
+      .addCase(refreshSession.rejected, (state) => {
+        // The refresh token is spent, revoked or expired. Nothing can be
+        // recovered, so end the session cleanly rather than looping on 401s.
+        writeToken(null);
+        writeToken(null, REFRESH_KEY);
+        state.token = null;
+        state.refreshToken = null;
         state.user = null;
         state.initialised = true;
       })
@@ -125,12 +184,9 @@ const authSlice = createSlice({
       .addMatcher(
         (action) => [login.fulfilled.type, register.fulfilled.type].includes(action.type),
         (state, action) => {
-          writeToken(action.payload.access_token);
-          state.token = action.payload.access_token;
-          state.user = action.payload.user;
+          adoptSession(state, action.payload);
           state.status = 'succeeded';
           state.error = null;
-          state.initialised = true;
         },
       )
       .addMatcher(
@@ -147,6 +203,8 @@ export const { logout, clearAuthError } = authSlice.actions;
 
 /** @returns {object|null} The signed-in user, or null. */
 export const selectUser = (state) => state.auth.user;
+/** @returns {string|null} The refresh token, or null. */
+export const selectRefreshToken = (state) => state.auth.refreshToken;
 /** @returns {string|null} The bearer token, or null. */
 export const selectToken = (state) => state.auth.token;
 /** @returns {string} The signed-in user's role, or an empty string. */

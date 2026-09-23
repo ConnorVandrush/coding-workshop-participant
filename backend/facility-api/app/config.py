@@ -50,7 +50,11 @@ POSTGRES_DSN: Final[str] = " ".join(
 ALLOWED_EMAIL_DOMAIN: Final[str] = os.getenv("ALLOWED_EMAIL_DOMAIN", "acme.inc")
 
 JWT_ALGORITHM: Final[str] = "HS256"
-ACCESS_TOKEN_TTL_MINUTES: Final[int] = int(os.getenv("ACCESS_TOKEN_TTL_MINUTES", "720"))
+# Short, because a leaked access token cannot be revoked - it is only a
+# signature, checked without touching the database. The refresh token is the
+# long-lived credential, and that one lives in a table and can be revoked.
+ACCESS_TOKEN_TTL_MINUTES: Final[int] = int(os.getenv("ACCESS_TOKEN_TTL_MINUTES", "30"))
+REFRESH_TOKEN_TTL_DAYS: Final[int] = int(os.getenv("REFRESH_TOKEN_TTL_DAYS", "7"))
 
 
 def _derive_signing_key() -> str:

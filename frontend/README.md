@@ -27,7 +27,9 @@ coding-workshop-participant/
 │   │   │   └── api.js             # fetch wrapper, error envelope, query builder
 │   │   ├── store/               # Redux Toolkit slices (one per domain)
 │   │   │   ├── index.js           # configureStore
-│   │   │   ├── authSlice.js       # token, profile, persisted session
+│   │   │   ├── authSlice.js       # tokens, profile, persisted session
+│   │   │   ├── session.js         # refreshSession thunk (split to break a cycle)
+│   │   │   ├── thunkUtils.js      # withAuth: retry once behind a renewed token
 │   │   │   ├── incidentsSlice.js  # list, filters, detail, notes
 │   │   │   ├── facilitiesSlice.js # buildings -> floors -> seats
 │   │   │   ├── engineersSlice.js  # roster, workload, accounts
@@ -72,6 +74,33 @@ together. Three decisions worth knowing:
   the detail view and the matching row in the list without a re-fetch.
 * **Toasts are global.** Any thunk reports success or failure through
   `notify()`, so no page has to own a snackbar.
+
+## Staying signed in
+
+Access tokens last 30 minutes, so a session that only refreshed on page load
+would drop a user mid-sentence. Instead every authenticated thunk goes through
+`withAuth`, which runs the request, and on a `token_expired` rejection renews
+the session and runs it exactly once more. Anything else is rejected untouched —
+a retry would not help a 403, and retrying a write could double-apply it.
+
+Renewal is **single-flight**. A dashboard mounting five thunks at once would
+otherwise fire five refreshes; because rotation invalidates the previous token,
+the second one through would replay a spent token and trip the server's reuse
+detection, logging the user out for doing nothing wrong. A module-level promise
+means concurrent callers await the one renewal in progress and then all retry
+with the token it produced.
+
+`refreshSession` lives in `store/session.js` rather than in `authSlice.js`
+because `thunkUtils` is imported *by* the slices; putting the thunk in the slice
+would make the import cycle back on itself.
+
+On startup `loadSession` restores the tokens from `localStorage` and validates
+the access token against `/auth/me`. If that fails the access token is dropped
+but **the refresh token is kept** — an expired access token is the normal state
+after leaving the tab open, and it is exactly the case the refresh token exists
+to handle. Only a failed refresh clears both and returns the user to login.
+Signing out calls `/auth/logout` so the token is revoked server-side, not merely
+forgotten by the browser.
 
 ## API base URL
 

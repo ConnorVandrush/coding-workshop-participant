@@ -5,7 +5,7 @@
 
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import { request } from '../services/api';
-import { errorMessage, rejectValue } from './thunkUtils';
+import { errorMessage, withAuth } from './thunkUtils';
 
 /**
  * Run a thunk body with the stored token, converting API errors to messages.
@@ -14,12 +14,8 @@ import { errorMessage, rejectValue } from './thunkUtils';
  * @param {object} thunkApi Redux Toolkit thunk API.
  * @returns {Promise<*>} The resolved payload or a rejection with a message.
  */
-async function withToken(body, { getState, rejectWithValue }) {
-  try {
-    return await body(getState().auth.token);
-  } catch (error) {
-    return rejectWithValue(rejectValue(error));
-  }
+async function withToken(body, thunkApi) {
+  return withAuth(thunkApi, body);
 }
 
 /** Load every engineer profile. */

@@ -153,7 +153,10 @@ restricted to `@acme.inc` addresses.
 | GET | `/health` | Liveness plus a PostgreSQL round-trip |
 | GET | `/workflow` | Status graph for the workflow diagram |
 | POST | `/auth/register` | Register an ACME employee |
-| POST | `/auth/login` | Exchange credentials for a bearer token |
+| POST | `/auth/login` | Exchange credentials for an access + refresh token pair |
+| POST | `/auth/refresh` | Trade a refresh token for a fresh pair (rotates) |
+| POST | `/auth/logout` | Revoke one refresh token |
+| POST | `/auth/logout-everywhere` | Revoke every refresh token for the account |
 | GET | `/auth/me` | Current profile |
 | GET | `/users` | List accounts (admin) |
 | PATCH | `/users/{id}/role` · `/status` | Promote, demote, deactivate (admin) |
@@ -253,6 +256,34 @@ requires a `resolution`; both are appended to the ticket's notes, and the
 `acknowledged_at` / `assigned_at` / `resolved_at` / `closed_at` stamps feed
 `GET /dashboard/sla`.
 
+## Sessions and token refresh
+
+Login returns two credentials with deliberately different lifetimes:
+
+| Token | TTL | Where it lives | Revocable |
+| ----- | --- | -------------- | --------- |
+| `access_token` | 30 min (`ACCESS_TOKEN_TTL_MINUTES`) | Nowhere — it is only a signature | No |
+| `refresh_token` | 7 days (`REFRESH_TOKEN_TTL_DAYS`) | `refresh_tokens`, hashed | Yes |
+
+The access token is short precisely *because* it cannot be revoked: it is
+verified from its signature alone, without touching the database, so the only
+thing limiting the damage of a leaked one is how soon it expires. The refresh
+token is the long-lived credential, and that one is a database row that can be
+deleted.
+
+`POST /auth/refresh` **rotates**: the presented token is marked spent and a new
+pair is issued. Each row records the token it replaced, so the tokens issued to
+one login form a chain. Presenting a token that was already spent is only
+possible if it was copied, so that request revokes the entire chain — the
+attacker's stolen token and the victim's live session both stop working — and
+returns `401 token_reused`. The alternative, revoking just the replayed token,
+lets whoever refreshes first keep the account.
+
+`POST /auth/logout` revokes a single token and answers `204` whether or not the
+token existed, so a client that has already lost its token can still log out
+cleanly. `POST /auth/logout-everywhere` clears every token for the account,
+which is what a user wants after losing a laptop.
+
 ## Error format
 
 Every non-2xx response uses one envelope:
@@ -271,7 +302,7 @@ Every non-2xx response uses one envelope:
 | Status | Typical `type` |
 | ------ | -------------- |
 | 400 | `validation_error`, `engineer_unavailable`, `engineer_at_capacity` |
-| 401 | `not_authenticated`, `invalid_credentials`, `invalid_token`, `token_expired` |
+| 401 | `not_authenticated`, `invalid_credentials`, `invalid_token`, `token_expired`, `token_reused` |
 | 403 | `forbidden`, `account_disabled`, `last_admin`, `self_deactivation` |
 | 404 | `not_found` (also returned instead of 403 so ids are not enumerable) |
 | 409 | `conflict`, `invalid_transition`, `incident_closed` |
@@ -281,10 +312,14 @@ Every non-2xx response uses one envelope:
 
 * Passwords are PBKDF2-HMAC-SHA256 (240k iterations, per-user salt) from the
   standard library, so the Lambda package needs no native crypto wheels.
-* Sessions are stateless HS256 JWTs. The signing key comes from `JWT_SECRET`
-  when set; otherwise it is derived deterministically from the deployment's own
-  identifiers so all containers agree. **Set `JWT_SECRET` explicitly outside the
-  workshop** by adding it to `local.env_vars` in `infra/locals.tf`.
+* Access tokens are stateless HS256 JWTs. The signing key comes from
+  `JWT_SECRET` when set; otherwise it is derived deterministically from the
+  deployment's own identifiers so all containers agree. **Set `JWT_SECRET`
+  explicitly outside the workshop** by adding it to `local.env_vars` in
+  `infra/locals.tf`.
+* Refresh tokens are 256-bit random strings stored as SHA-256 digests, never in
+  the clear. A slow KDF would be pointless here: unlike a password, the token
+  has full entropy, so there is no guessable input for an attacker to grind.
 * All SQL runs through psycopg parameter binding. The handful of f-string
   queries interpolate only module-level identifiers, never client input; those
   lines carry a `# nosec B608` with that justification so the Bandit workflow

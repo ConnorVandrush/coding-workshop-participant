@@ -17,12 +17,13 @@ from fastapi import Depends, Request
 
 from app.config import (
     ACCESS_TOKEN_TTL_MINUTES,
+    REFRESH_TOKEN_TTL_DAYS,
     JWT_ALGORITHM,
     JWT_SIGNING_KEY,
     PBKDF2_ITERATIONS,
     PBKDF2_SALT_BYTES,
 )
-from app.database import fetch_one
+from app.database import cursor, fetch_one
 from app.domain import Role
 from app.errors import ApiError
 
@@ -194,3 +195,142 @@ def engineer_profile_id(user: dict[str, Any]) -> Optional[int]:
         return None
     row = fetch_one("SELECT id FROM engineer_profiles WHERE user_id = %s", (user["id"],))
     return row["id"] if row else None
+
+
+# --------------------------------------------------------------------------
+# Refresh tokens
+# --------------------------------------------------------------------------
+def _digest(token: str) -> str:
+    """
+    Hash a refresh token for storage.
+
+    A plain SHA-256 is enough here, unlike for passwords: the token is 256 bits
+    of randomness we generated, so there is nothing to brute-force and no need
+    for a slow KDF.
+
+    Args:
+        token: The raw refresh token.
+
+    Returns:
+        str: Hex-encoded digest.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_refresh_token(user_id: int, replaces: Optional[int] = None) -> str:
+    """
+    Create a refresh token for a user and store only its digest.
+
+    Args:
+        user_id: The account the token belongs to.
+        replaces: The row this token supersedes, when rotating.
+
+    Returns:
+        str: The raw token. This is the only time it exists in plaintext.
+    """
+    raw = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_TTL_DAYS)
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (user_id, _digest(raw), expires),
+        )
+        created = cur.fetchone()
+        if replaces is not None:
+            cur.execute(
+                "UPDATE refresh_tokens SET revoked_at = NOW(), replaced_by = %s WHERE id = %s",
+                (created["id"], replaces),
+            )
+    return raw
+
+
+def revoke_all_for_user(user_id: int) -> int:
+    """
+    Revoke every live refresh token for an account.
+
+    Args:
+        user_id: The account to lock out.
+
+    Returns:
+        int: How many tokens were revoked.
+    """
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = %s AND revoked_at IS NULL",
+            (user_id,),
+        )
+        return cur.rowcount
+
+
+def revoke_refresh_token(token: str) -> bool:
+    """
+    Revoke a single refresh token, used at sign-out.
+
+    Args:
+        token: The raw refresh token.
+
+    Returns:
+        bool: True when a live token was revoked.
+    """
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = %s AND revoked_at IS NULL",
+            (_digest(token),),
+        )
+        return cur.rowcount > 0
+
+
+def rotate_refresh_token(token: str) -> tuple[dict[str, Any], str]:
+    """
+    Exchange a refresh token for a new one, returning its owner.
+
+    Rotation is what makes theft detectable. A token is valid once; presenting
+    one that has already been spent means two parties hold it, so every token
+    for that account is revoked and the session ends everywhere. The legitimate
+    user signs in again, which is the correct outcome when a credential has
+    leaked.
+
+    Args:
+        token: The raw refresh token.
+
+    Returns:
+        tuple[dict, str]: The user row and a freshly issued refresh token.
+
+    Raises:
+        ApiError: 401 when the token is unknown, expired, or already spent.
+    """
+    row = fetch_one(
+        """
+        SELECT r.id, r.user_id, r.revoked_at, r.expires_at,
+               u.id AS uid, u.email, u.full_name, u.role, u.is_active, u.created_at
+        FROM refresh_tokens r
+        JOIN users u ON u.id = r.user_id
+        WHERE r.token_hash = %s
+        """,
+        (_digest(token),),
+    )
+    if row is None:
+        raise ApiError(401, "invalid_token", "Refresh token is not recognised")
+
+    if row["revoked_at"] is not None:
+        # Already spent. Either a replay or a stolen copy; either way, end the
+        # whole session rather than guess which.
+        revoked = revoke_all_for_user(row["user_id"])
+        logger.warning(
+            "Refresh token reuse detected for user %s; revoked %s token(s)", row["user_id"], revoked
+        )
+        raise ApiError(401, "token_reused", "This session has been ended for security reasons")
+
+    if row["expires_at"] <= datetime.now(timezone.utc):
+        raise ApiError(401, "token_expired", "Refresh token has expired; please sign in again")
+
+    if not row["is_active"]:
+        raise ApiError(403, "account_disabled", "Account has been deactivated")
+
+    user = {k: row[k] for k in ("email", "full_name", "role", "is_active", "created_at")}
+    user["id"] = row["uid"]
+    return user, issue_refresh_token(row["user_id"], replaces=row["id"])

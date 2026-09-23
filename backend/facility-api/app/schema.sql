@@ -92,6 +92,20 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Refresh tokens, stored as digests so a database leak does not hand over
+-- working credentials. Each use rotates: the old row is revoked and points at
+-- its replacement, which is what makes reuse of an already-spent token
+-- detectable.
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    token_hash  TEXT        NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ,
+    replaced_by BIGINT      REFERENCES refresh_tokens (id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Outbox for notification fan-out. The request that causes a change records
 -- the bare event here - one cheap insert - and the expansion into a row per
 -- recipient happens later, off that request.
@@ -118,3 +132,4 @@ CREATE INDEX IF NOT EXISTS idx_notes_incident        ON incident_notes (incident
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_read, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_events_pending
     ON notification_events (id) WHERE processed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id, revoked_at);
