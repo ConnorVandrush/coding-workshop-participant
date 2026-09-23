@@ -212,6 +212,48 @@ created with the current timestamp, so `GET /dashboard/sla` reports averages of
 `0.0` hours. Status counts, hotspots, escalations and workload are all accurate;
 only the elapsed-time metrics need real activity over time to become meaningful.
 
+### `load-test.py`
+
+Measures latency and error behaviour under a controlled request rate.
+
+**What it does**:
+
+* Drives an **open loop** - arrivals are scheduled against a clock, not against
+  the previous response. A closed-loop driver cannot overload anything, because
+  when the service slows down the driver slows with it and reports the latency
+  of a system that is keeping up by definition
+* Counts requests it could not dispatch as `shed` rather than delaying them, so
+  the saturation point is visible instead of hidden in the percentiles
+* Sends a realistic weighted mix - list, detail, dashboards, duplicate-check,
+  related, and login at a small share because it is far and away the most
+  expensive call
+* Signs in as both an employee and an admin, and draws incident ids from
+  whichever persona will actually be allowed to read them
+* Discards a warm-up period, since Aurora here auto-pauses at zero capacity and
+  the first request of a run pays for the resume
+* Reports p50/p90/p95/p99 overall and per scenario, and can write raw results
+  as JSON
+
+**Usage**:
+
+```sh
+# Against a local backend
+./bin/load-test.py --url http://127.0.0.1:8000 --stages 5:30,15:30
+
+# Against the deployed stack, capping the shared Lambda pool for the run
+./bin/load-test.py --reserve 20 --stages 2:60,5:60,10:60,25:60
+
+./bin/load-test.py --dry-run          # print the plan, send nothing
+./bin/load-test.py --writes           # include incident creation in the mix
+./bin/load-test.py --json out.json    # raw results for comparison across runs
+```
+
+**Before pointing it at AWS**: the workshop account is shared and Lambda
+concurrency is an account-wide pool, so `--reserve N` caps the blast radius for
+the duration of the run and removes the reservation afterwards. The script
+refuses more than 25 req/s against a remote target without `--force`, because
+four ACUs and a small Lambda do not need much to saturate.
+
 ### `setup-participant.sh`
 
 **One-time setup for multi-participant AWS workshops** - configures participant credentials automatically.

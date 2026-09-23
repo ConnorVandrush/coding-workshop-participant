@@ -416,6 +416,49 @@ which exchanges `PARTICIPANT_CODE` for short-lived credentials at run time —
 the same path used locally. When these secrets are absent the deploy job skips
 itself with a notice and the test job still runs, so forks stay green.
 
+## Capacity
+
+Measured against the deployed stack with `./bin/load-test.py`, ramping 2 -> 5 ->
+10 -> 25 req/s for a minute each, reads only, with Lambda concurrency reserved
+at 20 for the run. 2,520 requests, **no failures and no saturation at any
+stage**, so 25 req/s is a floor on capacity rather than the ceiling.
+
+| p95 | before | after |
+| --- | ------ | ----- |
+| Sign in | 1803ms | **456ms** |
+| Incident list | 88ms | **29ms** |
+| Incident detail | 67ms | **24ms** |
+| Duplicate check | 68ms | **26ms** |
+| Dashboard summary | 71ms | **26ms** |
+| Overall p50 | 49ms | **20ms** |
+
+The "before" column is the same test at the Lambda's original 128 MB. Sign-in
+stood out immediately and at every rate: 1.8 seconds, flat, which is the shape
+of a CPU-bound call rather than a contended one. It is PBKDF2-HMAC-SHA256 at
+240,000 iterations, and Lambda allocates CPU in proportion to memory, so at
+128 MB there was very little of it.
+
+Raising the function to 512 MB is in `infra/lambda.tf`, with the measurements
+that chose that number. Briefly: billing is per GB-second, so the login path
+costs the same at any size - four times the memory for a quarter of the
+duration - while reads do get dearer, because their latency is mostly network
+and PostgreSQL and stops falling around 25ms. 512 MB is where reads have nearly
+finished improving and the extra is not yet being bought and left idle.
+
+Two things this run did not test, and one it cannot:
+
+* **Writes.** The mix is read-only so the deployed demo data stays as seeded.
+  `--writes` adds incident creation.
+* **Beyond 25 req/s.** The script refuses to go higher against a remote target
+  without `--force`, because the account's Lambda concurrency is shared with
+  other participants.
+* **Cold starts.** The warm-up is discarded on purpose, and it is worth knowing
+  what it discarded: the first request of a run took **3.8 seconds**, because
+  Aurora Serverless v2 here scales to zero and auto-pauses after 300 seconds.
+  The first person to sign in after a quiet spell pays for the cluster to
+  resume. Setting a non-zero minimum capacity would remove that, at the cost of
+  paying for an always-warm cluster.
+
 ## Tests
 
 The suite opens by truncating every table, so it must point at a database of

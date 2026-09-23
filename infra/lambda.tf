@@ -3,12 +3,28 @@ module "lambda" {
   source   = "terraform-aws-modules/lambda/aws"
   version  = "~> 8.0"
 
-  function_name   = format("%s-%s-%s", var.aws_project, each.value.name, local.app_id)
-  package_type    = "Zip"
-  architectures   = [each.value.arch]
-  handler         = each.value.handler
-  runtime         = each.value.runtime
-  memory_size     = 128
+  function_name = format("%s-%s-%s", var.aws_project, each.value.name, local.app_id)
+  package_type  = "Zip"
+  architectures = [each.value.arch]
+  handler       = each.value.handler
+  runtime       = each.value.runtime
+  # Lambda gives CPU in proportion to memory, so this is a speed setting as much
+  # as a size one - and this service's most expensive call is pure CPU. Signing
+  # in runs PBKDF2-HMAC-SHA256 at 240,000 iterations, which took 1,800ms at
+  # 128 MB. Measured against the deployed stack (bin/load-test.py):
+  #
+  #     128 MB   login 1800ms   dashboard 57ms   list 58ms
+  #     256 MB   login  902ms   dashboard 37ms   list 39ms
+  #     512 MB   login  460ms   dashboard 28ms   list 30ms
+  #    1024 MB   login  239ms   dashboard 24ms   list 27ms
+  #
+  # Billing is per GB-second, so the login path costs the same at every size:
+  # four times the memory for a quarter of the duration. Reads do get dearer,
+  # because their latency is mostly network and PostgreSQL rather than CPU and
+  # so stops falling around 25ms - past 512 MB the extra is bought and idle.
+  # That is where this sits: reads roughly twice as fast, login four times,
+  # for about 40% more GB-seconds on a bill measured in cents.
+  memory_size     = 512
   timeout         = 300
   tracing_mode    = "PassThrough"
   build_in_docker = false
