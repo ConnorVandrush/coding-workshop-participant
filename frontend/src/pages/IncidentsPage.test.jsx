@@ -245,6 +245,11 @@ describe('naming the failed unit while reporting', () => {
     const dialog = screen.getByRole('dialog');
     await userEvent.type(within(dialog).getByLabelText(/Title/), 'Projector is dead again');
     await userEvent.type(within(dialog).getByLabelText(/What is wrong/), 'No power light at all.');
+
+    // The field is disabled until the register arrives, and clicking a disabled
+    // select does nothing. This helper text renders only once it has, so it is
+    // the load being waited for rather than an arbitrary tick.
+    await screen.findByText('Choose a location above to narrow this list');
     await userEvent.click(within(dialog).getByLabelText('Equipment'));
     await userEvent.click(await screen.findByRole('option', { name: /AV-3A-PROJ-01/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Report' }));
