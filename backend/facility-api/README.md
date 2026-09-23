@@ -27,6 +27,21 @@ through all three entry points.
 ./bin/start-dev.sh               # LocalStack + PostgreSQL + React, all local
 ```
 
+**Error responses reach the browser intact, and that took a fix.** The
+distribution used to carry a `custom_error_response` mapping 404 to
+`/index.html` with a 200, for client-side routing. Those apply to every origin,
+so the API's own 404s arrived at the browser as an HTML page with a 200 on it,
+and the frontend's "this incident does not exist, or it is outside what your
+role can see" could never appear. The rule did not even do its job: the bucket
+policy grants CloudFront `s3:GetObject` alone, so S3 answers a missing key with
+**403**, not 404 - every client-side route was returning raw AccessDenied XML.
+
+`infra/cloudfront.tf` now rewrites client routes to `/index.html` in a
+CloudFront Function attached to the default cache behaviour, which `/api/*`
+never reaches because it has its own. Both bugs close, and the deploy workflow
+asserts each direction afterwards - neither the unit suites nor the end-to-end
+suite can see this, since both run against a local stack with no CDN in front.
+
 Interactive OpenAPI docs are served at `/docs` (i.e.
 `https://{cloudfront}/api/facility-api/docs`).
 

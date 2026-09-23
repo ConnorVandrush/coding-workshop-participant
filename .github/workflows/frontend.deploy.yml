@@ -178,3 +178,45 @@ jobs:
           done
           echo "::error::Site did not return HTTP 200 after deployment."
           exit 1
+
+      # The unit and end-to-end suites both run against a local stack, so
+      # neither can see how CloudFront treats a response. It once rewrote every
+      # 404 into a 200 serving index.html, which broke the API's "not found"
+      # path, while client-side routes returned S3's raw 403 AccessDenied XML -
+      # and every test stayed green through both. This is the only place those
+      # two failures are visible.
+      - name: Verify CloudFront routing and status passthrough
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          cd infra
+          SITE=$(terraform output -raw website_url 2>/dev/null || echo "")
+          if [ -z "$SITE" ]; then
+            echo "::warning::Could not read website_url; skipping routing checks."
+            exit 0
+          fi
+          FAILED=0
+
+          # A client-side route has no object behind it and must still serve the app.
+          for ROUTE in /incidents /dashboard /incidents/42; do
+            CODE=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 30 "$SITE$ROUTE" || echo 000)
+            if [ "$CODE" != "200" ] || ! grep -qi "<!doctype html" /tmp/body; then
+              echo "::error::$ROUTE returned $CODE and did not serve the app shell."
+              FAILED=1
+            fi
+          done
+
+          # An unknown API path must keep the API's own 404, not become the app.
+          CODE=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 30 \
+            "$SITE/api/facility-api/incidents/99999999" \
+            -H 'authorization: Bearer definitely-not-a-token' || echo 000)
+          if [ "$CODE" = "200" ]; then
+            echo "::error::CloudFront rewrote an API error into HTTP 200."
+            head -c 200 /tmp/body
+            FAILED=1
+          fi
+          if grep -qi "<!doctype html" /tmp/body; then
+            echo "::error::An API path served the app shell instead of a JSON error."
+            FAILED=1
+          fi
+
+          exit $FAILED

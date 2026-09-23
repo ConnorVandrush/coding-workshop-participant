@@ -6,6 +6,45 @@ resource "aws_cloudfront_origin_access_control" "this" {
   signing_protocol                  = "sigv4"
 }
 
+# Client-side routing for the React app.
+#
+# The bucket policy grants CloudFront `s3:GetObject` and nothing else, so S3
+# answers a request for a key that does not exist with 403 AccessDenied rather
+# than 404 - there is no `s3:ListBucket` permission with which to tell the two
+# apart. Every client route (`/incidents`, `/dashboard`, ...) is exactly that:
+# a path with no object behind it. So the app is served by rewriting those
+# paths to `/index.html` here, on the way in.
+#
+# The alternative, a distribution-wide `custom_error_response`, cannot work:
+# it applies to every origin, so it would also rewrite the API's own 403s and
+# 404s - turning "you may not do that" into an HTML page with a 200 on it.
+# A function attached to the default cache behaviour alone never sees `/api/*`,
+# which is served by its own ordered_cache_behavior.
+resource "aws_cloudfront_function" "spa_router" {
+  count   = data.aws_caller_identity.this.id != "000000000000" ? 1 : 0
+  name    = format("%s-spa-router", local.origin_id)
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite client-side routes to /index.html"
+  publish = true
+
+  code = <<-JAVASCRIPT
+    function handler(event) {
+      var request = event.request;
+      var lastSegment = request.uri.split('/').pop();
+
+      // A final segment containing a dot is a real file - index-a1b2c3.js,
+      // manifest.webmanifest, sw.js. Those are left alone so that an asset
+      // which genuinely is not there still fails, rather than quietly
+      // returning HTML with a 200 and breaking in the browser instead.
+      if (lastSegment.indexOf('.') === -1) {
+        request.uri = '/index.html';
+      }
+
+      return request;
+    }
+  JAVASCRIPT
+}
+
 resource "aws_cloudfront_distribution" "this" {
   count               = data.aws_caller_identity.this.id != "000000000000" ? 1 : 0
   enabled             = true
@@ -37,13 +76,6 @@ resource "aws_cloudfront_distribution" "this" {
         origin_ssl_protocols   = ["TLSv1.2"]
       }
     }
-  }
-
-  custom_error_response {
-    error_code            = 404
-    error_caching_min_ttl = 300
-    response_code         = 200
-    response_page_path    = "/index.html"
   }
 
   # logging_config {
@@ -103,6 +135,13 @@ resource "aws_cloudfront_distribution" "this" {
       cookies {
         forward = "none"
       }
+    }
+
+    # Only on this behaviour: `/api/*` has its own, and must keep whatever
+    # status the API returned.
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = element(aws_cloudfront_function.spa_router.*.arn, count.index)
     }
   }
 
