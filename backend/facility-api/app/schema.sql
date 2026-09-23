@@ -92,6 +92,20 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Outbox for notification fan-out. The request that causes a change records
+-- the bare event here - one cheap insert - and the expansion into a row per
+-- recipient happens later, off that request.
+CREATE TABLE IF NOT EXISTS notification_events (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event        TEXT        NOT NULL,
+    incident_id  BIGINT      REFERENCES incidents (id) ON DELETE CASCADE,
+    actor_id     BIGINT      REFERENCES users (id) ON DELETE SET NULL,
+    detail       TEXT,
+    attempts     INTEGER     NOT NULL DEFAULT 0,
+    processed_at TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Indexes supporting the dashboard aggregations and the list filters.
 CREATE INDEX IF NOT EXISTS idx_incidents_status      ON incidents (status);
 CREATE INDEX IF NOT EXISTS idx_incidents_priority    ON incidents (priority);
@@ -102,3 +116,5 @@ CREATE INDEX IF NOT EXISTS idx_incidents_building    ON incidents (building_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_created_at  ON incidents (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notes_incident        ON incident_notes (incident_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, is_read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_events_pending
+    ON notification_events (id) WHERE processed_at IS NULL;

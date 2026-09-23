@@ -193,30 +193,39 @@ around SLA timestamps.
 Telling everyone about a change is fan-out: one status change can concern the
 reporter, the assigned engineer and every facility admin. Doing that inside the
 request would add latency to a workflow transition, and a failure to notify
-would fail a state change that has already been agreed. So the API enqueues and
-returns:
+would fail a state change that has already been agreed.
 
 ```
 POST /incidents/{id}/status
-  -> record the transition, enqueue {event, incident_id, actor_id}
-SQS coding-workshop-notifications-{app_id}
-  -> backend/notifier expands it into one notification per recipient
+  -> record the transition, then one cheap insert into notification_events
+notification_events (an outbox)
+  -> expanded into a row per recipient, off the causing request, by either
+     backend/notifier (whole backlog) or a bounded drain when someone reads
+     their feed
 GET /notifications  ->  the bell in the app bar
 ```
 
+**Why an outbox rather than a queue.** SQS with an event source mapping is the
+usual answer, and an asynchronous Lambda invocation the usual fallback. Neither
+works here, and the reasons are worth recording:
+
+* `lambda:CreateEventSourceMapping` acts on an `event-source-mapping:*` ARN,
+  while the deployment policy grants `lambda:*` only on
+  `function:coding-workshop*`. The mapping cannot be created.
+* The functions run in a VPC with **no NAT gateway** and no interface endpoint
+  for Lambda or SQS, so an in-VPC function cannot reach either control-plane
+  API — a call hangs until the request times out with a 504. Adding an endpoint
+  needs `ec2:CreateVpcEndpoint`, which is denied.
+
+The database is the only thing always reachable, so it carries the handoff.
+Events are claimed with `FOR UPDATE SKIP LOCKED`, so the worker and any API
+container draining concurrently never process the same event twice and never
+block one another. An event that can never render — an unknown type, or an
+incident since deleted — is marked processed rather than retried, and
+`attempts` caps anything that fails repeatedly.
+
 The person who caused the change is not notified about their own action, and
 internal notes are not announced, since employees cannot see them.
-
-Failures are handled by SQS rather than by code: the worker returns
-`batchItemFailures`, so a single bad record is retried alone instead of
-replaying the batch, and after three attempts it lands in the dead-letter
-queue. `infra/notifications.tf` defines the queue, its dead-letter queue and
-the event source mapping.
-
-`boto3` is deliberately not in `requirements.txt` — the Lambda runtime provides
-it, and vendoring it would add tens of megabytes. Where it is absent, such as a
-bare `uvicorn` run, enqueueing degrades to a logged no-op: a missing
-notification must never break the workflow it describes.
 
 ## Incident workflow
 

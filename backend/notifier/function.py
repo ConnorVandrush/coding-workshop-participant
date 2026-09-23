@@ -1,21 +1,29 @@
 """
 Notification worker.
 
-Consumes incident events from SQS and expands each one into a notification per
-interested person. This exists so that fan-out happens off the request: a
-status change should not wait on notifying several people, and a failure here
-must not undo a workflow transition that has already been agreed.
+Expands pending notification events into a row per interested person.
+
+The API records events in a `notification_events` outbox rather than sending
+them anywhere. The functions run in a VPC with no NAT gateway and no interface
+endpoint for Lambda or SQS, so an in-VPC function cannot reach those
+control-plane APIs - a call hangs until the request times out - and
+`ec2:CreateVpcEndpoint` is denied, so that cannot be fixed from here. The
+database is the only thing always reachable, so it carries the handoff.
+
+This worker does the expansion away from any user request. Where something can
+invoke it - LocalStack, an operator, a scheduler if one ever becomes available
+- it drains the whole backlog. Where nothing can, the API drains a bounded
+batch when someone reads their feed, so the work still happens off the request
+that caused it.
 
 Terraform discovers this folder from its requirements.txt and deploys it as a
 python3.13 Lambda with handler ``function.handler``, the same convention the
-API uses. Delivery is an SQS event source mapping, so failures are retried by
-SQS and eventually land in the dead-letter queue rather than being lost.
+API uses.
 """
 
-import json
 import logging
 import os
-from typing import Any, Iterable
+from typing import Any, Optional
 
 import psycopg
 from psycopg.rows import dict_row
@@ -38,10 +46,7 @@ DSN = " ".join(
     ]
 )
 
-# Reused across warm invocations, like the API's connection.
-_CONNECTION: psycopg.Connection | None = None
-
-# What each event says. The incident number is appended by the caller.
+# What each event says. The incident number is prefixed by `compose`.
 TEMPLATES = {
     "assigned": "was assigned to {assignee}",
     "status_changed": "moved to {detail}",
@@ -49,6 +54,11 @@ TEMPLATES = {
     "de_escalated": "is no longer escalated",
     "note_added": "has a new note from {actor}",
 }
+
+MAX_ATTEMPTS = 5
+
+# Reused across warm invocations, like the API's connection.
+_CONNECTION: Optional[psycopg.Connection] = None
 
 
 def _connection() -> psycopg.Connection:
@@ -64,58 +74,21 @@ def _connection() -> psycopg.Connection:
     return _CONNECTION
 
 
-def recipients_for(cursor: psycopg.Cursor, incident_id: int, actor_id: int) -> list[dict[str, Any]]:
+def compose(cursor: psycopg.Cursor, row: dict[str, Any]) -> Optional[str]:
     """
-    Work out who should hear about a change to an incident.
-
-    The reporter and the assigned engineer always care. Facility admins are
-    included because they own the queue as a whole. The person who made the
-    change is excluded: telling someone what they just did is noise.
+    Turn an outbox row into the sentence a person reads.
 
     Args:
         cursor: An open cursor.
-        incident_id: The incident that changed.
-        actor_id: The user who caused the change.
+        row: The outbox row.
 
     Returns:
-        list[dict]: Rows of ``{id, full_name}`` to notify.
+        str | None: The text, or None for an unknown event or a deleted
+        incident.
     """
-    cursor.execute(
-        """
-        SELECT DISTINCT u.id, u.full_name
-        FROM users u
-        WHERE u.is_active
-          AND u.id <> %(actor)s
-          AND (
-                u.id = (SELECT reporter_id FROM incidents WHERE id = %(incident)s)
-             OR u.id = (
-                    SELECT e.user_id FROM engineer_profiles e
-                    JOIN incidents i ON i.assignee_id = e.id
-                    WHERE i.id = %(incident)s
-                )
-             OR u.role = 'facility_admin'
-          )
-        """,
-        {"incident": incident_id, "actor": actor_id},
-    )
-    return list(cursor.fetchall())
-
-
-def compose(cursor: psycopg.Cursor, message: dict[str, Any]) -> str | None:
-    """
-    Turn a queued event into the sentence a person reads.
-
-    Args:
-        cursor: An open cursor.
-        message: The decoded queue message.
-
-    Returns:
-        str | None: The notification text, or None for an unknown event or a
-        missing incident.
-    """
-    template = TEMPLATES.get(message.get("event", ""))
+    template = TEMPLATES.get(row["event"])
     if template is None:
-        logger.warning("Ignoring unknown event: %s", message.get("event"))
+        logger.warning("Ignoring unknown event: %s", row["event"])
         return None
 
     cursor.execute(
@@ -127,77 +100,107 @@ def compose(cursor: psycopg.Cursor, message: dict[str, Any]) -> str | None:
         LEFT JOIN users ac ON ac.id = %(actor)s
         WHERE i.id = %(incident)s
         """,
-        {"incident": message["incident_id"], "actor": message.get("actor_id")},
+        {"incident": row["incident_id"], "actor": row["actor_id"]},
     )
     incident = cursor.fetchone()
     if incident is None:
-        # Deleted between the event and this invocation; nothing to say.
-        logger.info("Incident %s no longer exists", message["incident_id"])
         return None
 
     phrase = template.format(
         assignee=incident.get("assignee") or "an engineer",
         actor=incident.get("actor") or "someone",
-        detail=message.get("detail") or "a new state",
+        detail=row.get("detail") or "a new state",
     )
     return f"#{incident['id']} \"{incident['title']}\" {phrase}"
 
 
-def process(message: dict[str, Any]) -> int:
+def drain(limit: int = 500) -> int:
     """
-    Expand one event into notification rows.
+    Expand pending outbox events into notifications.
+
+    Rows are claimed with ``FOR UPDATE SKIP LOCKED``, so this worker and any
+    API container draining at the same time never handle the same event twice
+    and never block one another.
+
+    Recipients are the reporter, the assigned engineer and every facility
+    admin, minus whoever caused the change: telling someone what they just did
+    is noise.
 
     Args:
-        message: The decoded queue message.
+        limit: Maximum events to process in this pass.
 
     Returns:
-        int: How many notifications were written.
+        int: How many events were processed.
     """
     connection = _connection()
-    with connection.cursor() as cursor:
-        body = compose(cursor, message)
-        if body is None:
-            return 0
+    processed = 0
 
-        people = recipients_for(cursor, message["incident_id"], message.get("actor_id", 0))
-        if not people:
-            return 0
-
-        cursor.executemany(
+    with connection.transaction(), connection.cursor() as cursor:
+        cursor.execute(
             """
-            INSERT INTO notifications (user_id, incident_id, event, body)
-            VALUES (%s, %s, %s, %s)
+            SELECT id, event, incident_id, actor_id, detail, attempts
+            FROM notification_events
+            WHERE processed_at IS NULL AND attempts < %s
+            ORDER BY id
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
             """,
-            [(person["id"], message["incident_id"], message["event"], body) for person in people],
+            (MAX_ATTEMPTS, limit),
         )
-        return len(people)
+        for row in list(cursor.fetchall()):
+            body = compose(cursor, row)
+            if body is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO notifications (user_id, incident_id, event, body)
+                    SELECT u.id, %(incident)s, %(event)s, %(body)s
+                    FROM users u
+                    WHERE u.is_active
+                      AND u.id <> COALESCE(%(actor)s, 0)
+                      AND (
+                            u.id = (SELECT reporter_id FROM incidents WHERE id = %(incident)s)
+                         OR u.id = (
+                                SELECT e.user_id FROM engineer_profiles e
+                                JOIN incidents i ON i.assignee_id = e.id
+                                WHERE i.id = %(incident)s
+                            )
+                         OR u.role = 'facility_admin'
+                      )
+                    """,
+                    {
+                        "incident": row["incident_id"],
+                        "event": row["event"],
+                        "body": body,
+                        "actor": row["actor_id"],
+                    },
+                )
+            # Marked processed either way: an unknown event or a deleted
+            # incident will never succeed, so retrying it is pure cost.
+            cursor.execute(
+                "UPDATE notification_events SET processed_at = NOW(), attempts = attempts + 1 WHERE id = %s",
+                (row["id"],),
+            )
+            processed += 1
+
+    return processed
 
 
 def handler(event: dict[str, Any] | None = None, context: Any = None) -> dict[str, Any]:
     """
-    Lambda entry point for SQS batches.
-
-    A record that cannot be processed is reported through
-    ``batchItemFailures`` so SQS retries just that message and eventually sends
-    it to the dead-letter queue, rather than replaying the whole batch.
+    Lambda entry point: drain the outbox.
 
     Args:
-        event: The SQS event.
+        event: Optional ``{"limit": n}`` to bound one pass.
         context: The Lambda context.
 
     Returns:
-        dict: Partial batch failure response.
+        dict: ``{"processed": n}``.
     """
-    records: Iterable[dict[str, Any]] = (event or {}).get("Records", [])
-    failures: list[dict[str, str]] = []
-    written = 0
+    processed = drain(int((event or {}).get("limit", 500)))
+    logger.info("Expanded %s notification event(s)", processed)
+    return {"processed": processed}
 
-    for record in records:
-        try:
-            written += process(json.loads(record["body"]))
-        except Exception as exc:  # noqa: BLE001 - one bad record must not stop the batch
-            logger.exception("Could not process record %s: %s", record.get("messageId"), exc)
-            failures.append({"itemIdentifier": record.get("messageId", "")})
 
-    logger.info("Wrote %s notification(s) from %s record(s)", written, len(list(records)))
-    return {"batchItemFailures": failures}
+# Convenience entry point for `python function.py`.
+if __name__ == "__main__":
+    print(handler())

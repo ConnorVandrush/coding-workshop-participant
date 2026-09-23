@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.database import execute, fetch_all, fetch_one
 from app.errors import not_found
 from app.models import NotificationResponse, NotificationSummary
+from app.notifications import drain
 from app.security import get_current_user
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -46,6 +47,10 @@ async def list_notifications(
     Returns:
         dict: ``unread`` count and the ``items`` themselves.
     """
+    # Expand anything still pending before reporting the feed, so a reader
+    # never sees a stale count. Bounded, and safe to run concurrently.
+    drain()
+
     where = "WHERE user_id = %s" + (" AND is_read = FALSE" if unread_only else "")
     items = fetch_all(
         f"""

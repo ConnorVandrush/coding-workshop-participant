@@ -1,56 +1,37 @@
 """
-Tests for the notification worker.
+Tests for the deferred notification fan-out.
 
-The worker runs as its own Lambda, so it is exercised here through
-``function.handler`` with the SQS payload AWS actually delivers, against the
-same database the API writes to.
+The API records an event in an outbox; the expansion into a row per recipient
+happens later. Both drains are covered: the bounded one the API performs when
+someone reads their feed, and the full one the worker Lambda performs when
+something can invoke it.
 """
 
-import importlib
-import json
 import pathlib
 import sys
 
 import pytest
 
-from conftest import PASSWORD
-
 NOTIFIER_ROOT = pathlib.Path(__file__).resolve().parents[1] / "backend" / "notifier"
 
 
 @pytest.fixture(scope="module")
-def notifier():
+def worker():
     """
-    Import the worker with the test database settings already in place.
+    Import the worker Lambda with the test database settings in place.
 
     Returns:
         module: The imported `function` module.
     """
     sys.path.insert(0, str(NOTIFIER_ROOT))
     try:
+        import importlib
+
         import function
 
         yield importlib.reload(function)
     finally:
         sys.path.remove(str(NOTIFIER_ROOT))
-
-
-def sqs_event(*messages):
-    """
-    Build the SQS event shape Lambda delivers.
-
-    Args:
-        *messages: Message bodies to include.
-
-    Returns:
-        dict: An SQS event.
-    """
-    return {
-        "Records": [
-            {"messageId": f"m{i}", "body": json.dumps(m), "receiptHandle": f"r{i}"}
-            for i, m in enumerate(messages)
-        ]
-    }
 
 
 @pytest.fixture
@@ -74,9 +55,9 @@ def incident(client, world):
     return created
 
 
-def notifications_for(client, headers):
+def feed(client, headers):
     """
-    Read a person's feed through the API.
+    Read a person's feed through the API, which also drains the outbox.
 
     Args:
         client: The test client.
@@ -90,128 +71,185 @@ def notifications_for(client, headers):
     return response.json()
 
 
-def test_fan_out_reaches_everyone_except_the_actor(notifier, client, world, incident):
+def test_a_workflow_change_records_an_event_without_expanding_it(client, world, incident):
     """
-    A change notifies the reporter, the assignee and the admins - but not the
-    person who made it, because telling someone what they just did is noise.
+    The causing request does one cheap insert. Expansion is somebody else's
+    problem, which is the whole point of doing it this way.
     """
-    before = notifications_for(client, world["employee_h"])["unread"]
+    from app.database import fetch_one
 
-    written = notifier.handler(
-        sqs_event({
-            "event": "status_changed",
-            "incident_id": incident["id"],
-            "actor_id": world["admin"]["id"],
-            "detail": "BLOCKED",
-        })
+    before = fetch_one("SELECT COUNT(*)::int AS n FROM notification_events WHERE processed_at IS NULL")["n"]
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "because"},
+        headers=world["admin_h"],
     )
-    assert written["batchItemFailures"] == []
-
-    reporter = notifications_for(client, world["employee_h"])
-    assert reporter["unread"] == before + 1
-    assert "BLOCKED" in reporter["items"][0]["body"]
-    assert reporter["items"][0]["incident_id"] == incident["id"]
-
-    engineer = notifications_for(client, world["engineer_h"])
-    assert engineer["unread"] >= 1
-
-    # The admin caused it, so has nothing new from this event.
-    admin_bodies = [n["body"] for n in notifications_for(client, world["admin_h"])["items"]]
-    assert not any("BLOCKED" in b and str(incident["id"]) in b for b in admin_bodies)
+    after = fetch_one("SELECT COUNT(*)::int AS n FROM notification_events WHERE processed_at IS NULL")["n"]
+    assert after == before + 1
 
 
-def test_each_event_reads_as_a_sentence(notifier, client, world, incident):
+def test_reading_the_feed_expands_pending_events(client, world, incident):
+    """A reader drains the outbox, so the count they see is never stale."""
+    before = feed(client, world["employee_h"])["unread"]
+    client.post(
+        f"/incidents/{incident['id']}/status",
+        json={"status": "BLOCKED", "reason": "waiting on parts"},
+        headers=world["admin_h"],
+    )
+
+    after = feed(client, world["employee_h"])
+    assert after["unread"] == before + 1
+    assert "BLOCKED" in after["items"][0]["body"]
+    assert after["items"][0]["incident_id"] == incident["id"]
+
+
+def test_fan_out_reaches_everyone_except_the_actor(client, world, incident):
+    """
+    The reporter and the assigned engineer hear about a change; the person who
+    made it does not, because telling someone what they just did is noise.
+    """
+    client.get("/notifications", headers=world["admin_h"])  # drain anything pending
+    admin_before = len(feed(client, world["admin_h"])["items"])
+
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "safety"},
+        headers=world["admin_h"],
+    )
+
+    assert feed(client, world["employee_h"])["unread"] >= 1
+    assert feed(client, world["engineer_h"])["unread"] >= 1
+    assert len(feed(client, world["admin_h"])["items"]) == admin_before
+
+
+def test_the_worker_drains_the_same_outbox(worker, client, world, incident):
+    """
+    Where something can invoke the worker it clears the backlog, so no reader
+    has to. Both drains claim rows with SKIP LOCKED, so they cannot collide.
+    """
+    client.get("/notifications", headers=world["employee_h"])
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "worker path"},
+        headers=world["admin_h"],
+    )
+
+    assert worker.handler({}) == {"processed": 1}
+    # Nothing left for the next pass.
+    assert worker.handler({}) == {"processed": 0}
+    assert feed(client, world["employee_h"])["unread"] >= 1
+
+
+def test_each_event_reads_as_a_sentence(worker, client, world, incident):
     """Every supported event produces text naming the incident."""
+    from app.notifications import enqueue
+
     for event, expected in [
         ("assigned", "was assigned to"),
         ("escalated", "was escalated"),
         ("de_escalated", "is no longer escalated"),
         ("note_added", "has a new note from"),
     ]:
-        notifier.handler(sqs_event({
-            "event": event, "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-        }))
-        feed = notifications_for(client, world["employee_h"])
-        assert expected in feed["items"][0]["body"]
-        assert f"#{incident['id']}" in feed["items"][0]["body"]
+        enqueue(event, incident["id"], world["admin"]["id"])
+        worker.handler({})
+        latest = feed(client, world["employee_h"])["items"][0]
+        assert expected in latest["body"]
+        assert f"#{incident['id']}" in latest["body"]
 
 
-def test_an_unknown_event_is_ignored_rather_than_retried(notifier, client, world, incident):
+def test_an_unknown_event_is_retired_rather_than_retried(worker, world, incident):
     """
-    A message the worker does not understand is dropped, not failed: retrying
-    it would loop until it reached the dead-letter queue for no reason.
+    An event the worker cannot render will never succeed, so it is marked
+    processed instead of being retried at every reader's expense.
     """
-    result = notifier.handler(sqs_event({
-        "event": "teleported", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    }))
-    assert result["batchItemFailures"] == []
+    from app.database import fetch_one
+    from app.notifications import enqueue
+
+    enqueue("teleported", incident["id"], world["admin"]["id"])
+    worker.handler({})
+    pending = fetch_one("SELECT COUNT(*)::int AS n FROM notification_events WHERE processed_at IS NULL")
+    assert pending["n"] == 0
 
 
-def test_a_deleted_incident_is_ignored(notifier, client, world):
-    """An event for an incident that has since been deleted produces nothing."""
-    result = notifier.handler(sqs_event({
-        "event": "status_changed", "incident_id": 999999, "actor_id": world["admin"]["id"], "detail": "OPEN",
-    }))
-    assert result["batchItemFailures"] == []
+def test_a_deleted_incident_is_retired(worker, client, world):
+    """An event whose incident has since gone produces nothing and is retired."""
+    from app.database import execute, fetch_one
+
+    created = client.post(
+        "/incidents",
+        json={"title": "Doomed", "description": "d", "category": "OTHER"},
+        headers=world["employee_h"],
+    ).json()
+    from app.notifications import enqueue
+
+    enqueue("escalated", created["id"], world["admin"]["id"])
+    execute("DELETE FROM incidents WHERE id = %s", (created["id"],))
+
+    worker.handler({})
+    assert fetch_one("SELECT COUNT(*)::int AS n FROM notification_events WHERE processed_at IS NULL")["n"] == 0
 
 
-def test_a_bad_record_fails_alone(notifier, client, world, incident):
-    """
-    One unparseable record must not lose the rest of the batch, so it is
-    reported individually and SQS retries only that message.
-    """
-    event = sqs_event({
-        "event": "escalated", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    })
-    event["Records"].append({"messageId": "bad", "body": "not json", "receiptHandle": "r"})
-
-    result = notifier.handler(event)
-    assert [f["itemIdentifier"] for f in result["batchItemFailures"]] == ["bad"]
-    # ...and the good record still landed.
-    assert "was escalated" in notifications_for(client, world["employee_h"])["items"][0]["body"]
-
-
-def test_notifications_are_private_to_their_owner(client, world, notifier, incident):
+def test_notifications_are_private_to_their_owner(client, world, incident):
     """One person cannot read or dismiss another's feed."""
-    notifier.handler(sqs_event({
-        "event": "escalated", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    }))
-    mine = notifications_for(client, world["employee_h"])["items"][0]
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "privacy"},
+        headers=world["admin_h"],
+    )
+    mine = feed(client, world["employee_h"])["items"][0]
 
-    # A different employee cannot mark it read.
     assert client.post(f"/notifications/{mine['id']}/read", headers=world["other_h"]).status_code == 404
     assert client.post("/notifications/999999/read", headers=world["employee_h"]).status_code == 404
 
 
-def test_marking_read_clears_the_badge(client, world, notifier, incident):
+def test_marking_read_clears_the_badge(client, world, incident):
     """Reading one, then all, brings the unread count to zero."""
-    notifier.handler(sqs_event({
-        "event": "escalated", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    }))
-    feed = notifications_for(client, world["employee_h"])
-    assert feed["unread"] > 0
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "badge"},
+        headers=world["admin_h"],
+    )
+    current = feed(client, world["employee_h"])
+    assert current["unread"] > 0
 
-    first = client.post(f"/notifications/{feed['items'][0]['id']}/read", headers=world["employee_h"])
-    assert first.status_code == 200 and first.json()["is_read"] is True
+    one = client.post(f"/notifications/{current['items'][0]['id']}/read", headers=world["employee_h"])
+    assert one.status_code == 200 and one.json()["is_read"] is True
 
-    cleared = client.post("/notifications/read-all", headers=world["employee_h"])
-    assert cleared.status_code == 200
-    assert notifications_for(client, world["employee_h"])["unread"] == 0
+    assert client.post("/notifications/read-all", headers=world["employee_h"]).status_code == 200
+    assert feed(client, world["employee_h"])["unread"] == 0
 
 
-def test_unread_only_filters_the_feed(client, world, notifier, incident):
+def test_unread_only_filters_the_feed(client, world, incident):
     """The feed can be narrowed to what has not been read."""
-    notifier.handler(sqs_event({
-        "event": "escalated", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    }))
+    client.post(
+        f"/incidents/{incident['id']}/escalate",
+        json={"is_escalated": True, "reason": "one"},
+        headers=world["admin_h"],
+    )
+    feed(client, world["employee_h"])
     client.post("/notifications/read-all", headers=world["employee_h"])
-    notifier.handler(sqs_event({
-        "event": "note_added", "incident_id": incident["id"], "actor_id": world["admin"]["id"],
-    }))
 
+    client.post(
+        f"/incidents/{incident['id']}/notes",
+        json={"body": "a public note"},
+        headers=world["admin_h"],
+    )
     unread = client.get("/notifications?unread_only=true", headers=world["employee_h"]).json()
     assert len(unread["items"]) == 1
     assert unread["items"][0]["is_read"] is False
+
+
+def test_internal_notes_are_not_announced(client, world, incident):
+    """Employees cannot see internal notes, so they are not told about them."""
+    feed(client, world["employee_h"])
+    client.post("/notifications/read-all", headers=world["employee_h"])
+
+    client.post(
+        f"/incidents/{incident['id']}/notes",
+        json={"body": "triage only", "is_internal": True},
+        headers=world["admin_h"],
+    )
+    assert feed(client, world["employee_h"])["unread"] == 0
 
 
 def test_the_feed_requires_authentication(client):
