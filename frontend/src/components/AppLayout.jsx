@@ -16,6 +16,7 @@ import Divider from '@mui/material/Divider';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
@@ -94,18 +95,24 @@ export default function AppLayout({ children }) {
           const selected =
             item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
           return (
-            <ListItemButton
-              key={item.to}
-              component={RouterLink}
-              to={item.to}
-              selected={selected}
-              onClick={() => dispatch(setDrawerOpen(false))}
-            >
-              <ListItemIcon sx={{ minWidth: 40 }}>
-                <Icon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText primary={item.label} />
-            </ListItemButton>
+            // Wrapped in ListItem because a <ul> may only contain <li>. With
+            // `component={RouterLink}` the button renders as a bare <a>, which
+            // put an anchor directly inside the <ul> on every page and left
+            // the navigation without a list structure for a screen reader to
+            // announce ("list, 5 items") or to skip past.
+            <ListItem key={item.to} disablePadding>
+              <ListItemButton
+                component={RouterLink}
+                to={item.to}
+                selected={selected}
+                onClick={() => dispatch(setDrawerOpen(false))}
+              >
+                <ListItemIcon sx={{ minWidth: 40 }}>
+                  <Icon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            </ListItem>
           );
         })}
       </List>

@@ -113,7 +113,13 @@ function Breakdown({ title, buckets, onSelect }) {
                   {bucket.count}
                 </Typography>
               </Box>
+              {/* The label and the count are already rendered as text
+                  directly above, so this bar adds a visual sense of proportion
+                  and nothing else. Naming it would make a screen reader read
+                  every category twice; hiding it leaves the numbers, which are
+                  the actual information. */}
               <LinearProgress
+                aria-hidden="true"
                 variant="determinate"
                 value={(bucket.count / max) * 100}
                 sx={{ height: 6, borderRadius: 3 }}
@@ -168,7 +174,7 @@ export default function DashboardPage() {
     navigate('/incidents');
   };
 
-  if (status === 'loading' && !summary) return <LinearProgress sx={{ mt: 2 }} />;
+  if (status === 'loading' && !summary) return <LinearProgress aria-label="Loading the dashboard" sx={{ mt: 2 }} />;
   if (error) return <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>;
   if (!summary) return null;
 

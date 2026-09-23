@@ -112,7 +112,7 @@ export default function IncidentDetailPage() {
     if (isAdmin || isEngineer) dispatch(fetchEngineers());
   }, [dispatch, isAdmin, isEngineer]);
 
-  if (currentStatus === 'loading' && !incident) return <LinearProgress sx={{ mt: 2 }} />;
+  if (currentStatus === 'loading' && !incident) return <LinearProgress aria-label="Loading the incident" sx={{ mt: 2 }} />;
   if (currentStatus === 'failed') {
     return (
       <Alert severity="error" sx={{ mt: 3 }}>

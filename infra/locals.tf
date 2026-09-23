@@ -95,6 +95,9 @@ locals {
     }
   ]
   origin_id = format("%s-s3-origin-%s", var.aws_project, local.app_id)
+  # Namespaced per participant so several deployments in one account do
+  # not average their latencies together into a meaningless number.
+  metric_namespace = format("%s/%s", var.aws_project, local.app_id)
   env_vars = {
     APP_ID        = local.app_id
     APP_NAME      = format("%s-%s", var.aws_project, local.app_id)

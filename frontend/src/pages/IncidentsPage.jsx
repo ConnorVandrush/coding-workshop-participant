@@ -208,7 +208,7 @@ export default function IncidentsPage() {
         onReset={() => dispatch(resetFilters())}
       />
 
-      {listStatus === 'loading' ? <LinearProgress sx={{ mb: 2 }} /> : null}
+      {listStatus === 'loading' ? <LinearProgress aria-label="Loading incidents" sx={{ mb: 2 }} /> : null}
       {listError ? <Alert severity="error" sx={{ mb: 2 }}>{listError}</Alert> : null}
 
       <IncidentList incidents={incidents} onSelect={(id) => navigate(`/incidents/${id}`)} />

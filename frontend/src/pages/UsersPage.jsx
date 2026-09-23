@@ -160,10 +160,18 @@ export default function UsersPage() {
                   </TableCell>
                   <TableCell>{account.email}</TableCell>
                   <TableCell>
+                    {/* The mobile card carries a visible "Role" label; this
+                        one sits under a column header, which is not associated
+                        with a combobox by any assistive technology. Without a
+                        name it was announced as just "combobox, Employee".
+                        Naming the account as well as the field means a screen
+                        reader user moving down the column always knows whose
+                        role they are about to change. */}
                     <TextField
                       select
                       value={account.role}
                       onChange={(event) => changeRole(account, event.target.value)}
+                      slotProps={{ input: { 'aria-label': `Role for ${account.full_name}` } }}
                       sx={{ minWidth: 160 }}
                     >
                       {Object.entries(ROLE_LABELS).map(([value, label]) => (

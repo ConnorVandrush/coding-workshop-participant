@@ -416,6 +416,58 @@ which exchanges `PARTICIPANT_CODE` for short-lived credentials at run time —
 the same path used locally. When these secrets are absent the deploy job skips
 itself with a notice and the test job still runs, so forks stay green.
 
+## Observability
+
+Lambda already writes a REPORT line per invocation with the billed duration and
+the memory used. That answers "is the function healthy" and nothing else: it
+cannot say which endpoint is slow, which is failing, or for whom.
+
+`app/middleware.py::RequestLogMiddleware` emits one JSON line per request:
+
+```json
+{"level": "WARN", "event": "request", "method": "GET",
+ "route": "/incidents/{incident_id}", "path": "/incidents/99999",
+ "status": 404, "duration_ms": 2.85, "request_id": "..."}
+```
+
+Three details are deliberate. `route` is the **templated** path, so percentiles
+group by endpoint instead of splitting across every id ever requested. `level`
+is derived once, in the middleware, so the metric filters match on it rather
+than restating what counts as an error. And `/health` is excluded, because it
+is polled by CloudFront and the deploy workflow and would drown everything
+else. Bodies, the `Authorization` header and incident contents are never
+logged - the user id is recorded, the user's data is not.
+
+Because the lines are JSON, CloudWatch Logs Insights reads them with no regex:
+
+```sql
+fields @timestamp
+| filter event = "request"
+| stats count(*) as n, pct(duration_ms, 50) as p50, pct(duration_ms, 95) as p95 by route
+| sort p95 desc
+```
+
+```
+/auth/login                        18   431     13762.58
+/incidents/duplicate-check         44     5.43     84.53
+/dashboard/hotspots                11     8.21     18.98
+/incidents                         81    11.42     17.67
+```
+
+`infra/cloudwatch.tf` turns the same lines into CloudWatch metrics -
+`ServerErrors`, `ClientErrors`, and `RequestDurationMs` carrying the duration
+itself so p95 and p99 can be read straight off the distribution. Log retention
+is 7 days, set on the Lambda module.
+
+**Alarms are defined but off.** The workshop's participant role has
+`cloudwatch:Get*` and `cloudwatch:List*` and no `Put`, so `PutMetricAlarm`
+fails with AccessDenied. The definitions live in `infra/cloudwatch.tf` behind
+`enable_cloudwatch_alarms` rather than in prose, so that in an account with the
+permission they are one variable away: 5xx present, p95 over 1s for two
+consecutive periods, and Lambda throttles - that last one read from Lambda's
+own metrics, because a throttled invocation never reaches the application and
+so never writes a log line.
+
 ## Capacity
 
 Measured against the deployed stack with `./bin/load-test.py`, ramping 2 -> 5 ->

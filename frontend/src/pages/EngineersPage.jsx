@@ -162,7 +162,7 @@ export default function EngineersPage() {
         ) : null}
       </Stack>
 
-      {status === 'loading' ? <LinearProgress sx={{ mb: 2 }} /> : null}
+      {status === 'loading' ? <LinearProgress aria-label="Loading engineers" sx={{ mb: 2 }} /> : null}
 
       <Grid container spacing={2}>
         {engineers.map((engineer) => {
@@ -191,7 +191,10 @@ export default function EngineersPage() {
                     <strong>{engineer.active_incidents}</strong> of {engineer.max_active_incidents} active
                     {` (${load}%)`}
                   </Typography>
+                  {/* "3 of 5 active (60%)" is stated in the line above, so
+                      the bar is a redundant visual restatement of it. */}
                   <LinearProgress
+                    aria-hidden="true"
                     variant="determinate"
                     value={Math.min(100, load)}
                     color={load >= 100 ? 'warning' : 'primary'}

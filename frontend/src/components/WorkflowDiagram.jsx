@@ -79,9 +79,17 @@ export default function WorkflowDiagram({ workflow, currentStatus = '', allowedT
                   bgcolor: isCurrent
                     ? `${meta.color === 'default' ? 'grey' : meta.color}.main`
                     : 'background.paper',
-                  color: isCurrent ? 'common.white' : 'text.primary',
+                  // Dimmed with an explicit colour rather than `opacity`.
+                  // Fading text to 45% composites rgba(0,0,0,0.87) over white
+                  // down to #9b9b9b - 2.8:1, well under the 4.5:1 AA needs -
+                  // and because opacity applies to the rendered result, no
+                  // palette change can fix it. text.disabled is 5.1:1 and
+                  // reads as just as recessed.
+                  color: (() => {
+                    if (isCurrent) return 'common.white';
+                    return currentStatus && !isReachable ? 'text.disabled' : 'text.primary';
+                  })(),
                   fontWeight: isCurrent ? 700 : 500,
-                  opacity: currentStatus && !isCurrent && !isReachable ? 0.45 : 1,
                 }}
               >
                 <Typography variant="body2" component="span" sx={{ fontWeight: 'inherit' }}>

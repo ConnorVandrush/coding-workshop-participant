@@ -38,7 +38,7 @@ from app.config import APP_ID, IS_LOCAL, SERVICE_NAME, SERVICE_PREFIX
 from app.database import DatabaseUnavailable, ping
 from app.domain import workflow_graph
 from app.errors import ApiError
-from app.middleware import ServicePrefixMiddleware
+from app.middleware import RequestLogMiddleware, ServicePrefixMiddleware
 from app.routers import (
     auth,
     dashboard,
@@ -209,4 +209,9 @@ api.include_router(dashboard.router)
 api.include_router(notifications.router)
 
 # Outermost wrapper: must run before routing, hence not add_middleware().
-app = ServicePrefixMiddleware(api, SERVICE_PREFIX)
+#
+# The access log sits inside the prefix strip so that it records the path the
+# application actually routed on - otherwise the same endpoint would appear
+# twice, once with the CloudFront prefix and once without, and no percentile
+# would group correctly.
+app = ServicePrefixMiddleware(RequestLogMiddleware(api), SERVICE_PREFIX)

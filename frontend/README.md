@@ -233,8 +233,8 @@ npm run test:watch # watch mode while developing
 npm run coverage   # v8 coverage report
 ```
 
-266 tests across the API client, the Redux slices, the components and every
-page (86% statement coverage). They concentrate on behaviour a production build cannot catch:
+275 tests across the API client, the Redux slices, the components and every
+page (90% statement coverage). They concentrate on behaviour a production build cannot catch:
 
 * `services/api.test.js` — empty filters are dropped from query strings (the
   API rejects `""` for enum parameters), the error envelope is unwrapped, a 204
@@ -279,7 +279,7 @@ npm run e2e          # or npm run e2e:ui for the interactive runner
 E2E_BASE_URL=https://your-distribution.cloudfront.net npm run e2e
 ```
 
-21 Playwright tests over the journeys the workshop calls critical:
+36 Playwright tests over the journeys the workshop calls critical:
 
 * `e2e/auth.spec.js` — anonymous redirect, bad credentials, off-domain
   registration, and a session surviving a reload then ending on sign out.
@@ -288,6 +288,15 @@ E2E_BASE_URL=https://your-distribution.cloudfront.net npm run e2e
   the engineer progresses, blocks with a reason, unblocks and resolves, and the
   reporter closes. Plus the note thread, internal notes staying invisible to
   employees, and escalation that only an admin can clear.
+* `e2e/accessibility.spec.js` — axe against WCAG 2.1 A and AA, on every page as
+  each of the three personas, plus the report dialog with the duplicate panel
+  open. It found four real defects on its first run, all now fixed: MUI's stock
+  `info` and `warning` were 3.9:1 and 3.1:1 so every status and priority chip
+  failed AA; the navigation rendered anchors directly inside a `<ul>`; the
+  dashboard's proportion bars were unnamed progressbars; and the accounts
+  table's role dropdown had no accessible name at all. A companion test covers
+  what axe cannot see — that the report dialog opens from the keyboard, traps
+  focus and closes on Escape.
 * `e2e/duplicates.spec.js` — the ranking itself, against real PostgreSQL rather
   than a stub: a reworded, misspelled report is recognised as one already
   filed; a genuinely different fault on the same equipment is not; the panel

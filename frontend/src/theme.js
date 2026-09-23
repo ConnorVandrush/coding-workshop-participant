@@ -79,6 +79,19 @@ const theme = createTheme({
   palette: {
     primary: { main: '#1a4f8a' },
     secondary: { main: '#c2571a' },
+    // MUI's stock info (#0288d1) and warning (#ed6c02) are only 3.9:1 and 3.1:1
+    // against white, so every status and priority chip using them failed WCAG
+    // AA in both directions - dark text on white, and white text on the filled
+    // chip. These are the nearest shades that clear 4.5:1 (4.80 and 5.05), so
+    // the palette still reads as the same blue and orange. The stock success
+    // (5.13) and error (4.98) already pass and are left alone.
+    info: { main: '#0277bd' },
+    warning: { main: '#b35309' },
+    // Stock text.disabled is rgba(0,0,0,0.38), which renders as #9b9b9b at
+    // 2.8:1. It is used here for statuses a workflow has not reached yet -
+    // ordinary informational text, not a disabled control, so the exemption
+    // that WCAG grants disabled elements does not apply to it.
+    text: { disabled: '#6e6e6e' },
     background: { default: '#f4f6f9' },
   },
   shape: { borderRadius: 10 },
