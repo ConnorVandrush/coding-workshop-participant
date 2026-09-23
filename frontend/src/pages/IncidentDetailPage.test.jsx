@@ -136,6 +136,15 @@ describe('controls mirror the API permissions', () => {
     expect(screen.queryByText('Assignment')).not.toBeInTheDocument();
   });
 
+  it('hides the assignment panel from an engineer, who cannot assign work', async () => {
+    api();
+    renderDetail(ENGINEER);
+    await screen.findByText('Projector will not power on');
+    expect(screen.queryByText('Assignment')).not.toBeInTheDocument();
+    // The engineer still drives the work they were given.
+    expect(screen.getByText('Change status')).toBeInTheDocument();
+  });
+
   it('offers only the transitions the API says are legal', async () => {
     api();
     renderDetail(ADMIN);
@@ -263,6 +272,44 @@ describe('notes', () => {
 });
 
 describe('assignment', () => {
+  // A plumber and an AV engineer, against an incident filed as AV_EQUIPMENT.
+  const roster = [
+    { ...engineers[0], id: 6, user_id: 4, full_name: 'Priya Raman', specialties: ['PLUMBING'] },
+    engineers[0],
+  ];
+
+  it('offers the engineers who specialise in the incident first', async () => {
+    api({ 'GET /engineers': roster, 'GET /incidents/:id': incident({ assignee: null }) });
+    renderDetail(ADMIN);
+    await screen.findByText('Assignment');
+
+    await userEvent.click(screen.getByLabelText('Assigned engineer'));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      'Unassigned',
+      expect.stringContaining('Sam Okafor'),
+      expect.stringContaining('Priya Raman'),
+    ]);
+    // The headings label the two groups without becoming choices themselves.
+    expect(screen.getByText('Specialises in Av Equipment')).toBeInTheDocument();
+    expect(screen.getByText('Other engineers')).toBeInTheDocument();
+    expect(options[1]).toHaveTextContent('specialises in Av Equipment');
+    expect(options[2]).not.toHaveTextContent('specialises in');
+  });
+
+  it('leaves the roster ungrouped when nobody specialises in the incident', async () => {
+    api({
+      'GET /engineers': [roster[0]],
+      'GET /incidents/:id': incident({ assignee: null }),
+    });
+    renderDetail(ADMIN);
+    await screen.findByText('Assignment');
+
+    await userEvent.click(screen.getByLabelText('Assigned engineer'));
+    expect(await screen.findByRole('option', { name: /Priya Raman/ })).toBeInTheDocument();
+    expect(screen.queryByText('Other engineers')).not.toBeInTheDocument();
+  });
+
   it('marks an engineer at capacity as unselectable', async () => {
     api({
       'GET /engineers': [{ ...engineers[0], active_incidents: 8, has_capacity: false }],

@@ -276,10 +276,23 @@ def test_assignment_records_acknowledgement(client, world, incident):
     assert body["assigned_at"] and body["acknowledged_at"]
 
 
-def test_engineers_may_only_self_assign(client, world, incident):
-    """An engineer cannot hand work to a colleague."""
+def test_engineers_cannot_assign_incidents(client, world, incident):
+    """Assignment belongs to facility admins, including self-assignment."""
     response = client.post(
-        f"/incidents/{incident['id']}/assign", json={"engineer_id": 999999}, headers=world["engineer_h"]
+        f"/incidents/{incident['id']}/assign",
+        json={"engineer_id": world["engineer"]["id"]},
+        headers=world["engineer_h"],
+    )
+    assert response.status_code == 403
+    assert client.get(f"/incidents/{incident['id']}", headers=world["admin_h"]).json()["assignee"] is None
+
+
+def test_employees_cannot_assign_incidents(client, world, incident):
+    """Nor may the reporter choose who picks their incident up."""
+    response = client.post(
+        f"/incidents/{incident['id']}/assign",
+        json={"engineer_id": world["engineer"]["id"]},
+        headers=world["employee_h"],
     )
     assert response.status_code == 403
 

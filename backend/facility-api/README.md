@@ -148,7 +148,7 @@ security workflow does not trip over their `assert` statements.
 | See incidents | own only | assigned + unassigned | all |
 | Edit an incident | own, while `OPEN` | assigned | any |
 | Change priority | request only | assigned | any |
-| Assign work | – | self-assign | anyone |
+| Assign work | – | – | anyone |
 | Drive the workflow | close/reopen own resolved | assigned | any |
 | Escalate | own | assigned | any (and can clear) |
 | Internal notes | – | ✓ | ✓ |

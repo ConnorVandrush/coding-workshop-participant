@@ -7,7 +7,7 @@
  * dead-end buttons.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -22,6 +22,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Grid from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
+import ListSubheader from '@mui/material/ListSubheader';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
@@ -29,6 +30,8 @@ import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import { visuallyHidden } from '@mui/utils';
+import PropTypes from 'prop-types';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LockIcon from '@mui/icons-material/Lock';
@@ -59,6 +62,29 @@ import {
 import { notify } from '../store/uiSlice';
 import { errorMessage } from '../store/thunkUtils';
 import { STATUS_META, formatDateTime, humanise } from '../theme';
+
+/**
+ * Heading for a group of options in the assignment dropdown.
+ *
+ * Select clones every child it is given with `role="option"`, which would
+ * offer the heading itself to a screen reader as somebody assignable. This
+ * drops the props it is handed and renders the subheader on its own terms, so
+ * the heading stays out of the list of choices.
+ *
+ * @param {object} props Component props.
+ * @param {React.ReactNode} props.children The heading text.
+ * @returns {JSX.Element} A heading row that cannot be chosen.
+ */
+function AssignmentGroup({ children }) {
+  return (
+    <ListSubheader role="presentation" disableSticky>
+      {children}
+    </ListSubheader>
+  );
+}
+
+AssignmentGroup.propTypes = { children: PropTypes.node.isRequired };
+
 
 /**
  * Render the incident detail page.
@@ -108,9 +134,22 @@ export default function IncidentDetailPage() {
   const isEngineer = user?.role === 'engineer';
   const isReporter = incident?.reporter?.id === user?.id;
 
+  // The roster arrives in no order that helps an assignment decision, so the
+  // engineers whose specialties cover this incident's category are lifted to
+  // the top of the dropdown and labelled; everyone else stays reachable below.
+  const incidentCategory = incident?.category;
+  const { matching, others } = useMemo(() => {
+    const groups = { matching: [], others: [] };
+    engineers.forEach((engineer) => {
+      const fits = Boolean(incidentCategory) && (engineer.specialties ?? []).includes(incidentCategory);
+      groups[fits ? 'matching' : 'others'].push(engineer);
+    });
+    return groups;
+  }, [engineers, incidentCategory]);
+
   useEffect(() => {
-    if (isAdmin || isEngineer) dispatch(fetchEngineers());
-  }, [dispatch, isAdmin, isEngineer]);
+    if (isAdmin) dispatch(fetchEngineers());
+  }, [dispatch, isAdmin]);
 
   if (currentStatus === 'loading' && !incident) return <LinearProgress aria-label="Loading the incident" sx={{ mt: 2 }} />;
   if (currentStatus === 'failed') {
@@ -122,7 +161,9 @@ export default function IncidentDetailPage() {
   }
   if (!incident) return null;
 
-  const canAssign = isAdmin || isEngineer;
+  // Assignment is a facility admin's call alone: engineers do not pick up
+  // their own work, so that one owner keeps control of how load is spread.
+  const canAssign = isAdmin;
   const canDriveWorkflow =
     isAdmin || (isEngineer && incident.assignee?.user_id === user?.id) || isReporter;
 
@@ -156,6 +197,29 @@ export default function IncidentDetailPage() {
       dispatch(fetchNotes(incidentId));
     }
   };
+
+  /**
+   * Render one engineer as an option in the assignment dropdown.
+   *
+   * The heading above the matching engineers is presentational, so the fit is
+   * repeated inside each matching option, where a screen reader reading the
+   * choices out one by one will reach it.
+   *
+   * @param {object} engineer Engineer profile with its live workload.
+   * @param {boolean} fits Whether the engineer specialises in this category.
+   * @returns {JSX.Element} The menu item.
+   */
+  const engineerOption = (engineer, fits) => (
+    <MenuItem key={engineer.id} value={engineer.id} disabled={!engineer.has_capacity}>
+      {engineer.full_name} ({engineer.active_incidents}/{engineer.max_active_incidents})
+      {fits ? (
+        <Box component="span" sx={visuallyHidden}>
+          {` — specialises in ${humanise(incident.category)}`}
+        </Box>
+      ) : null}
+      {engineer.has_capacity ? '' : ' — at capacity'}
+    </MenuItem>
+  );
 
   /**
    * Assign or unassign the incident.
@@ -401,15 +465,16 @@ export default function IncidentDetailPage() {
                 value={incident.assignee?.id ?? ''}
                 onChange={(event) => submitAssignment(event.target.value)}
                 disabled={saving}
-                helperText={isEngineer ? 'Engineers may only assign work to themselves' : ' '}
               >
                 <MenuItem value="">Unassigned</MenuItem>
-                {engineers.map((engineer) => (
-                  <MenuItem key={engineer.id} value={engineer.id} disabled={!engineer.has_capacity}>
-                    {engineer.full_name} ({engineer.active_incidents}/{engineer.max_active_incidents})
-                    {engineer.has_capacity ? '' : ' — at capacity'}
-                  </MenuItem>
-                ))}
+                {matching.length > 0 ? (
+                  <AssignmentGroup>Specialises in {humanise(incident.category)}</AssignmentGroup>
+                ) : null}
+                {matching.map((engineer) => engineerOption(engineer, true))}
+                {matching.length > 0 && others.length > 0 ? (
+                  <AssignmentGroup>Other engineers</AssignmentGroup>
+                ) : null}
+                {others.map((engineer) => engineerOption(engineer, false))}
               </TextField>
             </Paper>
           ) : null}

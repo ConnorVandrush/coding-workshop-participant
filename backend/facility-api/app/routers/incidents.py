@@ -561,8 +561,8 @@ async def delete_incident(incident_id: int, user: dict[str, Any] = _ANY_USER) ->
 # POST /incidents/{incident_id}/assign
 # Request body: {"engineer_id": 3, "note": "Sam owns AV kit on this floor"}
 #   - `engineer_id: null` unassigns the incident.
-# Rules: facility admins may assign anyone; an engineer may only self-assign an
-#        unassigned incident.
+# Rules: only facility admins may assign. Engineers do not pick up their own
+#        work, so that a single owner keeps control of how load is spread.
 # Response 200: the updated incident object
 # Response 400: validation_error (engineer unavailable or at capacity)
 # Response 403: forbidden | 404: not_found (incident or engineer)
@@ -587,19 +587,14 @@ async def assign_incident(
         dict: The updated incident.
 
     Raises:
-        ApiError: 403 when the caller may not assign, 404 for unknown records,
-            400 when the engineer is unavailable or already at capacity.
+        ApiError: 403 for any caller who is not a facility admin, 404 for
+            unknown records, 400 when the engineer is unavailable or already at
+            capacity.
     """
-    incident = _load_incident(incident_id, user)
-    own_profile = engineer_profile_id(user)
+    _load_incident(incident_id, user)
 
     if not is_admin(user):
-        if user["role"] != Role.ENGINEER:
-            raise ApiError(403, "forbidden", "Only engineers and facility admins may assign incidents")
-        if payload.engineer_id != own_profile:
-            raise ApiError(403, "forbidden", "Engineers may only assign incidents to themselves")
-        if incident["assignee_id"] not in (None, own_profile):
-            raise ApiError(403, "forbidden", "This incident is already assigned to another engineer")
+        raise ApiError(403, "forbidden", "Only facility admins may assign incidents")
 
     if payload.engineer_id is not None:
         engineer = fetch_one(
